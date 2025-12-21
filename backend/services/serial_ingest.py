@@ -158,54 +158,73 @@ class SerialIngest:
             on_sample: 回調函數
         """
         logger.info("Read loop started")
+        consecutive_errors = 0
+        max_consecutive_errors = 10
 
-        while self._running and not self._stop_event.is_set():
-            try:
-                # 讀取一行
-                if not self.serial or not self.serial.is_open:
-                    logger.error("Serial not open")
-                    break
-
-                line_bytes = self.serial.readline()
-                if not line_bytes:
-                    continue  # timeout
-
-                # 解碼
+        try:
+            while self._running and not self._stop_event.is_set():
                 try:
-                    line = line_bytes.decode('utf-8', errors='ignore').strip()
-                except Exception as e:
-                    logger.debug(f"Decode error: {e}")
-                    continue
+                    # 讀取一行
+                    if not self.serial or not self.serial.is_open:
+                        logger.error("Serial not open")
+                        break
 
-                # 解析
-                sample = self.parse_line(line)
-                if sample:
-                    # 記錄接收時間
-                    sample.t_received_ns = time.time_ns()
+                    line_bytes = self.serial.readline()
+                    if not line_bytes:
+                        continue  # timeout
 
-                    # 掉包檢測
-                    dropped = self._check_drop(sample.seq)
-                    if dropped > 0:
-                        self._stats['dropped'] += dropped
-                        logger.warning(f"Dropped {dropped} packets (seq: {self._last_seq} -> {sample.seq})")
-
-                    # 更新統計
-                    self._stats['total_rx'] += 1
-                    self._update_pps()
-
-                    # 回調
+                    # 解碼
                     try:
-                        on_sample(sample)
+                        line = line_bytes.decode('utf-8', errors='ignore').strip()
                     except Exception as e:
-                        logger.error(f"Callback error: {e}")
+                        logger.debug(f"Decode error: {e}")
+                        continue
 
-            except serial.SerialException as e:
-                logger.error(f"Serial error: {e}")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in read loop: {e}")
+                    # 解析
+                    sample = self.parse_line(line)
+                    if sample:
+                        # 重置連續錯誤計數
+                        consecutive_errors = 0
 
-        logger.info("Read loop ended")
+                        # 記錄接收時間
+                        sample.t_received_ns = time.time_ns()
+
+                        # 掉包檢測
+                        dropped = self._check_drop(sample.seq)
+                        if dropped > 0:
+                            self._stats['dropped'] += dropped
+                            logger.warning(f"Dropped {dropped} packets (seq: {self._last_seq} -> {sample.seq})")
+
+                        # 更新統計
+                        self._stats['total_rx'] += 1
+                        self._update_pps()
+
+                        # 回調
+                        try:
+                            on_sample(sample)
+                        except Exception as e:
+                            logger.error(f"Callback error: {e}")
+
+                except serial.SerialException as e:
+                    consecutive_errors += 1
+                    logger.error(f"Serial error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.critical("Too many serial errors, stopping read loop")
+                        break
+                    time.sleep(0.1)  # Brief pause before retry
+
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"Unexpected error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.critical("Too many errors, stopping read loop")
+                        break
+                    time.sleep(0.1)
+
+        finally:
+            # Ensure clean state on exit
+            self._running = False
+            logger.info("Read loop ended")
 
     def parse_line(self, line: str) -> Optional[SerialSample]:
         """

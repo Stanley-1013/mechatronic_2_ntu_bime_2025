@@ -97,7 +97,8 @@ export function createTimeSeriesChart(container, options = {}) {
          */
         clear() {
             const seriesCount = chart.data.length;
-            const emptyData = Array(seriesCount).fill([]);
+            // Create independent empty arrays (not shared references)
+            const emptyData = Array(seriesCount).fill(null).map(() => []);
             chart.setData(emptyData);
         },
 

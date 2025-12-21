@@ -7,13 +7,19 @@ set -e
 cd "$(dirname "$0")/backend"
 
 # 檢查 Python 版本
-PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+')
-REQUIRED_VERSION="3.9"
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+REQUIRED_MAJOR=3
+REQUIRED_MINOR=9
 
-if (( $(echo "$PYTHON_VERSION < $REQUIRED_VERSION" | bc -l) )); then
-    echo "錯誤: 需要 Python $REQUIRED_VERSION 或更高版本（目前: $PYTHON_VERSION）"
+MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+
+if [ "$MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$MINOR" -lt "$REQUIRED_MINOR" ]); then
+    echo "錯誤: 需要 Python ${REQUIRED_MAJOR}.${REQUIRED_MINOR} 或更高版本（目前: $PYTHON_VERSION）"
     exit 1
 fi
+
+echo "Python 版本: $PYTHON_VERSION ✓"
 
 # 檢查依賴是否已安裝
 if ! python3 -c "import fastapi" 2>/dev/null; then

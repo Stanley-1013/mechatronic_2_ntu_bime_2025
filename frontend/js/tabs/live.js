@@ -11,6 +11,7 @@ let isActive = true;
 let isRecording = false;
 let recordingName = '';
 let recordingStartTime = null;
+let recordingTimerInterval = null;
 
 // Data buffers
 const WINDOW_SECONDS = 10; // Display last 10 seconds
@@ -63,6 +64,7 @@ export function initLiveTab() {
         },
 
         destroy() {
+            stopRecordingTimer();
             if (unsubscribe) unsubscribe();
             if (chart) chart.destroy();
         }
@@ -126,14 +128,21 @@ function handleMessage(data) {
         case 'sample':
             onSample(data);
             break;
-        case 'segment_start':
-            onSegmentStart(data);
-            break;
-        case 'segment_end':
-            onSegmentEnd(data);
+        case 'segment':
+            // Backend sends: { type: 'segment', event: 'start'/'end', data: {...} }
+            if (data.event === 'start') {
+                onSegmentStart(data);
+            } else if (data.event === 'end') {
+                onSegmentEnd(data);
+            }
             break;
         case 'stats':
+        case 'stat':
             onStats(data);
+            break;
+        case 'label':
+            // Label event from backend
+            console.log('[Live] Label event:', data);
             break;
         case 'recording_started':
             onRecordingStarted(data);
@@ -152,24 +161,25 @@ function handleMessage(data) {
  * @param {object} data - Sample data
  */
 function onSample(data) {
-    // Expected format:
+    // Backend format:
     // {
     //   type: 'sample',
-    //   timestamp: 1234567890.123,
-    //   g1: [x, y, z],
-    //   g2: [x, y, z]
+    //   data: {
+    //     seq, t_remote_ms, btn,
+    //     g1_mag, g2_mag, a1_mag, a2_mag,
+    //     gx1_dps, gy1_dps, gz1_dps, gx2_dps, gy2_dps, gz2_dps
+    //   }
     // }
 
-    const { timestamp, g1, g2 } = data;
-
-    if (!timestamp || !g1 || !g2) {
+    const sample = data.data;
+    if (!sample) {
         console.warn('[Live] Invalid sample data:', data);
         return;
     }
 
-    // Calculate magnitudes
-    const g1_mag = Math.sqrt(g1[0]**2 + g1[1]**2 + g1[2]**2);
-    const g2_mag = Math.sqrt(g2[0]**2 + g2[1]**2 + g2[2]**2);
+    const timestamp = sample.t_remote_ms / 1000.0; // Convert ms to seconds
+    const g1_mag = sample.g1_mag || 0;
+    const g2_mag = sample.g2_mag || 0;
     const dg_mag = Math.abs(g1_mag - g2_mag);
 
     // Add to buffer
@@ -206,23 +216,30 @@ function onSample(data) {
  * @param {object} data - Segment data
  */
 function onSegmentStart(data) {
-    // Expected format:
+    // Backend format:
     // {
-    //   type: 'segment_start',
-    //   segment_id: 'seg_123',
-    //   timestamp: 1234567890.123
+    //   type: 'segment',
+    //   event: 'start',
+    //   data: { shot_id, t_start_ms, ... }
     // }
 
     console.log('[Live] Segment started:', data);
 
+    const segData = data.data || {};
     const segment = {
-        id: data.segment_id,
-        startTime: data.timestamp,
+        id: segData.shot_id,
+        startTime: segData.t_start_ms / 1000.0,  // Convert ms to seconds
         endTime: null,
         label: null
     };
 
     segments.push(segment);
+
+    // Limit segments array size to prevent memory leak
+    if (segments.length > 100) {
+        segments.shift();
+    }
+
     updateSegmentsList();
 }
 
@@ -231,20 +248,33 @@ function onSegmentStart(data) {
  * @param {object} data - Segment data
  */
 function onSegmentEnd(data) {
-    // Expected format:
+    // Backend format:
     // {
-    //   type: 'segment_end',
-    //   segment_id: 'seg_123',
-    //   timestamp: 1234567890.123,
-    //   label: 'good' | 'bad' | null
+    //   type: 'segment',
+    //   event: 'end',
+    //   data: { shot_id, t_start_ms, t_end_ms, duration_ms, features, label }
     // }
 
     console.log('[Live] Segment ended:', data);
 
-    const segment = segments.find(s => s.id === data.segment_id);
+    const segData = data.data || {};
+    const segment = segments.find(s => s.id === segData.shot_id);
     if (segment) {
-        segment.endTime = data.timestamp;
-        segment.label = data.label || null;
+        segment.endTime = segData.t_end_ms / 1000.0;  // Convert ms to seconds
+        segment.duration_ms = segData.duration_ms;
+        segment.label = segData.label || null;
+        segment.features = segData.features || {};
+        updateSegmentsList();
+    } else {
+        // Segment not found (maybe started before page load), create new entry
+        segments.push({
+            id: segData.shot_id,
+            startTime: segData.t_start_ms / 1000.0,
+            endTime: segData.t_end_ms / 1000.0,
+            duration_ms: segData.duration_ms,
+            label: segData.label || null,
+            features: segData.features || {}
+        });
         updateSegmentsList();
     }
 }
@@ -254,15 +284,19 @@ function onSegmentEnd(data) {
  * @param {object} data - Stats data
  */
 function onStats(data) {
-    // Expected format:
+    // Backend format:
     // {
-    //   type: 'stats',
-    //   pps: 30,
-    //   dropped: 0
+    //   type: 'stat',
+    //   data: {
+    //     pps: 30,
+    //     dropped: 0,
+    //     ...
+    //   }
     // }
 
-    if (data.pps !== undefined) stats.pps = data.pps;
-    if (data.dropped !== undefined) stats.dropped = data.dropped;
+    const statData = data.data || data;
+    if (statData.pps !== undefined) stats.pps = statData.pps;
+    if (statData.dropped !== undefined) stats.dropped = statData.dropped;
 
     updateStatsDisplay();
 }
@@ -304,17 +338,23 @@ async function startRecording(name) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ session_name: name })
+            body: JSON.stringify({ name: name })
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
         }
 
         const result = await response.json();
         console.log('[Live] Recording start response:', result);
 
-        // Backend will send 'recording_started' WebSocket message
+        // Update UI directly from API response (don't wait for WebSocket)
+        isRecording = true;
+        recordingName = result.session_id || name;
+        recordingStartTime = Date.now();
+        updateRecordingUI();
+        startRecordingTimer();
     } catch (error) {
         console.error('[Live] Failed to start recording:', error);
         alert(`錄製啟動失敗: ${error.message}`);
@@ -334,13 +374,17 @@ async function stopRecording() {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
         }
 
         const result = await response.json();
         console.log('[Live] Recording stop response:', result);
 
-        // Backend will send 'recording_stopped' WebSocket message
+        // Update UI directly from API response (don't wait for WebSocket)
+        isRecording = false;
+        recordingStartTime = null;
+        updateRecordingUI();
     } catch (error) {
         console.error('[Live] Failed to stop recording:', error);
         alert(`錄製停止失敗: ${error.message}`);
@@ -436,15 +480,31 @@ function updateRecordingUI() {
  * Start recording timer
  */
 function startRecordingTimer() {
-    if (!isRecording) return;
+    // Clear any existing timer to prevent duplicates
+    stopRecordingTimer();
 
-    const timerEl = document.getElementById('recording-timer');
-    if (!timerEl) return;
+    recordingTimerInterval = setInterval(() => {
+        if (!isRecording) {
+            stopRecordingTimer();
+            return;
+        }
 
-    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-    const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-    const seconds = (elapsed % 60).toString().padStart(2, '0');
-    timerEl.textContent = `${minutes}:${seconds}`;
+        const timerEl = document.getElementById('recording-timer');
+        if (!timerEl) return;
 
-    setTimeout(startRecordingTimer, 1000);
+        const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const seconds = (elapsed % 60).toString().padStart(2, '0');
+        timerEl.textContent = `${minutes}:${seconds}`;
+    }, 1000);
+}
+
+/**
+ * Stop recording timer
+ */
+function stopRecordingTimer() {
+    if (recordingTimerInterval) {
+        clearInterval(recordingTimerInterval);
+        recordingTimerInterval = null;
+    }
 }

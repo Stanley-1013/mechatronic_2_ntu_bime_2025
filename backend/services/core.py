@@ -11,6 +11,7 @@ from typing import Optional
 import threading
 import asyncio
 import logging
+import queue
 
 from .recorder import Recorder
 from .player import Player
@@ -56,6 +57,7 @@ class CoreService:
         # Runtime State
         self._running = False
         self._ws_manager = None  # WebSocket manager (延遲導入)
+        self._event_loop = None  # 主事件循環（用於線程安全的異步調用）
 
         # Stats & State
         self._stats = {
@@ -123,6 +125,12 @@ class CoreService:
             logger.warning("WebSocket manager not available")
             self._ws_manager = None
 
+        # 儲存當前事件循環（用於線程安全的異步調用）
+        try:
+            self._event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._event_loop = asyncio.get_event_loop()
+
         # 啟動 Serial Ingest（傳遞回調）
         await self.serial_ingest.start(self._on_raw_sample)
         self._running = True
@@ -141,9 +149,22 @@ class CoreService:
 
         logger.info("Serial stopped")
 
+    def _schedule_async(self, coro):
+        """
+        線程安全地調度異步協程到主事件循環
+
+        Args:
+            coro: 要執行的協程
+        """
+        if self._event_loop and self._ws_manager:
+            try:
+                asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+            except Exception as e:
+                logger.warning(f"Failed to schedule async task: {e}")
+
     def _on_raw_sample(self, raw_sample: SerialSample):
         """
-        處理原始資料的回調
+        處理原始資料的回調（從 Serial 線程調用）
 
         完整資料處理流程：
         1. 資料處理（單位轉換、濾波）
@@ -169,17 +190,26 @@ class CoreService:
                 # 段落完成，廣播 segment_event
                 logger.info(f"Shot segment completed: {segment.shot_id}, duration={segment.duration_ms}ms")
                 if self._ws_manager:
-                    asyncio.create_task(
-                        self._ws_manager.send_segment_event('end', segment)
+                    # 轉換 ShotSegment 為字典
+                    segment_dict = {
+                        'shot_id': segment.shot_id,
+                        't_start_ms': segment.t_start_ms,
+                        't_end_ms': segment.t_end_ms,
+                        'duration_ms': segment.duration_ms,
+                        'features': segment.features,
+                        'label': segment.label,
+                    }
+                    self._schedule_async(
+                        self._ws_manager.send_segment_event('end', segment_dict)
                     )
 
             # 4. 標註處理
             label_event = self.labeler.process_sample(processed, self.segmenter.segments)
-            if label_event:
+            if label_event and label_event.matched_shot_id:
                 # 標籤對齊成功，廣播 label_event
                 logger.info(f"Label event: matched_shot_id={label_event.matched_shot_id}")
                 if self._ws_manager:
-                    asyncio.create_task(
+                    self._schedule_async(
                         self._ws_manager.send_label_event(
                             label_event.matched_shot_id,
                             'good',
@@ -191,11 +221,26 @@ class CoreService:
             if self.recorder.is_recording:
                 self.recorder.write_sample(processed)
 
-            # 6. WebSocket 廣播（降頻）
-            # TODO: 實作降頻邏輯（例如每 10 筆廣播一次）
+            # 6. WebSocket 廣播（降頻由 ws_manager 處理）
+            # 轉換 ProcessedSample 為字典格式供 WebSocket 發送
             if self._ws_manager:
-                asyncio.create_task(
-                    self._ws_manager.send_sample(processed)
+                sample_dict = {
+                    'seq': processed.seq,
+                    't_remote_ms': processed.t_remote_ms,
+                    'btn': processed.btn,
+                    'g1_mag': processed.g1_mag,
+                    'g2_mag': processed.g2_mag,
+                    'a1_mag': processed.a1_mag,
+                    'a2_mag': processed.a2_mag,
+                    'gx1_dps': processed.gx1_dps,
+                    'gy1_dps': processed.gy1_dps,
+                    'gz1_dps': processed.gz1_dps,
+                    'gx2_dps': processed.gx2_dps,
+                    'gy2_dps': processed.gy2_dps,
+                    'gz2_dps': processed.gz2_dps,
+                }
+                self._schedule_async(
+                    self._ws_manager.send_sample(sample_dict)
                 )
 
         except Exception as e:
