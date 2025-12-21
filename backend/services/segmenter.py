@@ -92,6 +92,7 @@ class Segmenter:
 
         # 回調
         self._on_segment_complete: Optional[Callable[[ShotSegment], None]] = None
+        self._on_segment_start: Optional[Callable[[ShotSegment], None]] = None
 
     def process(self, sample: ProcessedSample) -> Optional[ShotSegment]:
         """
@@ -188,6 +189,10 @@ class Segmenter:
             t_start_ms=t_ms,
             samples=[sample]
         )
+
+        # 觸發開始回調
+        if self._on_segment_start:
+            self._on_segment_start(self._current_seg)
 
     def _enter_cooldown(self, t_ms: int):
         """進入 COOLDOWN 狀態，記錄段落結束時間"""
@@ -307,6 +312,10 @@ class Segmenter:
     def set_on_segment_complete(self, callback: Callable[[ShotSegment], None]):
         """設定段落完成回調"""
         self._on_segment_complete = callback
+
+    def set_on_segment_start(self, callback: Callable[[ShotSegment], None]):
+        """設定段落開始回調"""
+        self._on_segment_start = callback
 
     @property
     def state(self) -> SegmentState:

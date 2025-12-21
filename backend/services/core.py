@@ -58,6 +58,7 @@ class CoreService:
         self._running = False
         self._ws_manager = None  # WebSocket manager (延遲導入)
         self._event_loop = None  # 主事件循環（用於線程安全的異步調用）
+        self._stats_task: Optional[asyncio.Task] = None  # 統計推送任務
 
         # Stats & State
         self._stats = {
@@ -131,10 +132,16 @@ class CoreService:
         except RuntimeError:
             self._event_loop = asyncio.get_event_loop()
 
+        # 設定 segmenter 回調
+        self.segmenter.set_on_segment_start(self._on_segment_start)
+
         # 啟動 Serial Ingest（傳遞回調）
         await self.serial_ingest.start(self._on_raw_sample)
         self._running = True
         logger.info("Serial started")
+
+        # 啟動統計推送任務
+        self._stats_task = asyncio.create_task(self._stats_push_loop())
 
     def stop_serial(self):
         """停止 Serial 資料流"""
@@ -144,10 +151,27 @@ class CoreService:
         logger.info("Stopping serial...")
         self._running = False
 
+        # 取消統計推送任務
+        if self._stats_task:
+            self._stats_task.cancel()
+            self._stats_task = None
+
         if self.serial_ingest:
             self.serial_ingest.stop()
 
         logger.info("Serial stopped")
+
+    async def _stats_push_loop(self):
+        """定期推送統計數據到 WebSocket"""
+        while self._running:
+            try:
+                if self._ws_manager:
+                    stats = self.get_stats()
+                    serial_stats = stats.get('serial', {})
+                    await self._ws_manager.send_stat(serial_stats)
+            except Exception as e:
+                logger.warning(f"Failed to push stats: {e}")
+            await asyncio.sleep(1.0)  # 每秒推送一次
 
     def _schedule_async(self, coro):
         """
@@ -245,6 +269,18 @@ class CoreService:
 
         except Exception as e:
             logger.error(f"Error processing sample: {e}", exc_info=True)
+
+    def _on_segment_start(self, segment):
+        """處理段落開始事件（從 Segmenter 回調）"""
+        logger.info(f"Shot segment started: {segment.shot_id}")
+        if self._ws_manager:
+            segment_dict = {
+                'shot_id': segment.shot_id,
+                't_start_ms': segment.t_start_ms,
+            }
+            self._schedule_async(
+                self._ws_manager.send_segment_event('start', segment_dict)
+            )
 
     # --- 錄製控制 ---
 

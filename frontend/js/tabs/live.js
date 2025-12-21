@@ -20,9 +20,14 @@ const MAX_POINTS = WINDOW_SECONDS * SAMPLE_RATE;
 
 let dataBuffer = {
     time: [],
-    g1: [],
-    g2: [],
-    dg: []
+    // MPU1 三軸角速度 (°/s)
+    gx1: [],
+    gy1: [],
+    gz1: [],
+    // MPU2 三軸角速度 (°/s)
+    gx2: [],
+    gy2: [],
+    gz2: []
 };
 
 // Statistics
@@ -82,11 +87,14 @@ function initChart() {
         return;
     }
 
-    // Create chart with three series: |g1|, |g2|, Δ|g|
+    // Create chart with 6 series: MPU1 (gx1, gy1, gz1) + MPU2 (gx2, gy2, gz2)
     chart = createMultiSeriesChart(
         chartContainer,
-        ['|g1|', '|g2|', 'Δ|g|'],
-        ['#2563eb', '#10b981', '#f59e0b'] // blue, green, orange
+        ['gx1', 'gy1', 'gz1', 'gx2', 'gy2', 'gz2'],
+        [
+            '#ef4444', '#22c55e', '#3b82f6',  // MPU1: red, green, blue
+            '#f97316', '#a855f7', '#06b6d4'   // MPU2: orange, purple, cyan
+        ]
     );
 
     console.log('[Live] Chart initialized');
@@ -178,31 +186,37 @@ function onSample(data) {
     }
 
     const timestamp = sample.t_remote_ms / 1000.0; // Convert ms to seconds
-    const g1_mag = sample.g1_mag || 0;
-    const g2_mag = sample.g2_mag || 0;
-    const dg_mag = Math.abs(g1_mag - g2_mag);
 
-    // Add to buffer
+    // Add to buffer - 6 axis data
     dataBuffer.time.push(timestamp);
-    dataBuffer.g1.push(g1_mag);
-    dataBuffer.g2.push(g2_mag);
-    dataBuffer.dg.push(dg_mag);
+    dataBuffer.gx1.push(sample.gx1_dps || 0);
+    dataBuffer.gy1.push(sample.gy1_dps || 0);
+    dataBuffer.gz1.push(sample.gz1_dps || 0);
+    dataBuffer.gx2.push(sample.gx2_dps || 0);
+    dataBuffer.gy2.push(sample.gy2_dps || 0);
+    dataBuffer.gz2.push(sample.gz2_dps || 0);
 
     // Trim to window size
     if (dataBuffer.time.length > MAX_POINTS) {
         dataBuffer.time = dataBuffer.time.slice(-MAX_POINTS);
-        dataBuffer.g1 = dataBuffer.g1.slice(-MAX_POINTS);
-        dataBuffer.g2 = dataBuffer.g2.slice(-MAX_POINTS);
-        dataBuffer.dg = dataBuffer.dg.slice(-MAX_POINTS);
+        dataBuffer.gx1 = dataBuffer.gx1.slice(-MAX_POINTS);
+        dataBuffer.gy1 = dataBuffer.gy1.slice(-MAX_POINTS);
+        dataBuffer.gz1 = dataBuffer.gz1.slice(-MAX_POINTS);
+        dataBuffer.gx2 = dataBuffer.gx2.slice(-MAX_POINTS);
+        dataBuffer.gy2 = dataBuffer.gy2.slice(-MAX_POINTS);
+        dataBuffer.gz2 = dataBuffer.gz2.slice(-MAX_POINTS);
     }
 
     // Update chart
     if (chart) {
         chart.setData([
             dataBuffer.time,
-            dataBuffer.g1,
-            dataBuffer.g2,
-            dataBuffer.dg
+            dataBuffer.gx1,
+            dataBuffer.gy1,
+            dataBuffer.gz1,
+            dataBuffer.gx2,
+            dataBuffer.gy2,
+            dataBuffer.gz2
         ]);
     }
 
