@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mechtronic - 投籃動作分析</title>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/charts.css">
+
+    <!-- 外部函式庫 (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Mechtronic 投籃動作分析</h1>
+        <div id="connection-status"></div>
+    </header>
+
+    <nav class="tabs">
+        <button class="tab-btn active" data-tab="live">Live</button>
+        <button class="tab-btn" data-tab="replay">Replay</button>
+        <button class="tab-btn" data-tab="analysis">Analysis</button>
+    </nav>
+
+    <main>
+        <section id="tab-live" class="tab-content active">
+            <div class="live-grid">
+                <!-- 統計卡片 -->
+                <div class="card stats-card">
+                    <h3>連線狀態</h3>
+                    <div class="stats-container">
+                        <div class="stat-item">
+                            <span class="stat-label">PPS</span>
+                            <span id="live-pps" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Dropped</span>
+                            <span id="live-dropped" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Buffer</span>
+                            <span id="live-buffer" class="stat-value">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 時序圖 -->
+                <div class="card chart-card">
+                    <h3>即時感測資料</h3>
+                    <div id="live-chart" style="width:100%;height:300px;"></div>
+                </div>
+
+                <!-- 錄製控制 -->
+                <div class="card record-card">
+                    <h3>錄製控制</h3>
+                    <div class="record-controls">
+                        <input type="text" id="record-name" placeholder="Session 名稱" />
+                        <button id="btn-record-start" class="btn btn-primary">開始錄製</button>
+                        <button id="btn-record-stop" class="btn btn-danger" disabled>停止錄製</button>
+                    </div>
+                    <div id="record-status" class="record-status"></div>
+                </div>
+
+                <!-- 段落列表 -->
+                <div class="card segments-card">
+                    <h3>偵測到的投籃</h3>
+                    <div id="live-segments-list" class="segments-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-replay" class="tab-content">
+            <div class="replay-grid">
+                <!-- Session 選擇 -->
+                <div class="card">
+                    <h3>選擇 Session</h3>
+                    <select id="session-select">
+                        <option value="">-- 選擇 --</option>
+                    </select>
+                    <div id="session-info" class="session-info"></div>
+                </div>
+
+                <!-- 播放控制 -->
+                <div class="card">
+                    <h3>播放控制</h3>
+                    <div class="playback-controls">
+                        <button id="btn-play" class="btn btn-play">▶ 播放</button>
+                        <button id="btn-pause" class="btn" disabled>⏸ 暫停</button>
+                        <button id="btn-stop" class="btn" disabled>⏹ 停止</button>
+                    </div>
+                    <div class="progress-bar">
+                        <input type="range" id="playback-progress" min="0" max="100" value="0" disabled>
+                        <span id="playback-time">00:00 / 00:00</span>
+                    </div>
+                    <div class="speed-control">
+                        <label>速度:</label>
+                        <select id="playback-speed">
+                            <option value="0.5">0.5x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="2">2x</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 時序圖 -->
+                <div class="card chart-card">
+                    <h3>回放資料</h3>
+                    <div id="replay-chart" style="width:100%;height:300px;"></div>
+                </div>
+
+                <!-- 段落列表 -->
+                <div class="card">
+                    <h3>偵測到的投籃</h3>
+                    <div id="replay-segments-list" class="segments-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-analysis" class="tab-content">
+            <div class="analysis-grid">
+                <!-- 段落列表 -->
+                <div class="card segments-panel">
+                    <h3>投籃段落</h3>
+                    <div class="segment-filter">
+                        <label><input type="checkbox" id="filter-good" checked> Good</label>
+                        <label><input type="checkbox" id="filter-unknown" checked> Unknown</label>
+                    </div>
+                    <div id="analysis-segments-list" class="segments-list"></div>
+                </div>
+
+                <!-- 散點圖 -->
+                <div class="card scatter-panel">
+                    <h3>特徵分布</h3>
+                    <div class="scatter-controls">
+                        <select id="scatter-x">
+                            <option value="g1_rms">g1_rms</option>
+                            <option value="g1_peak">g1_peak</option>
+                            <option value="dur">Duration</option>
+                        </select>
+                        vs
+                        <select id="scatter-y">
+                            <option value="dg_rms" selected>dg_rms</option>
+                            <option value="g2_rms">g2_rms</option>
+                            <option value="g2_peak">g2_peak</option>
+                        </select>
+                        <button id="scatter-refresh" class="btn">刷新</button>
+                    </div>
+                    <div id="scatter-chart" style="width:100%;height:400px;"></div>
+                </div>
+
+                <!-- 段落詳情 -->
+                <div class="card detail-panel">
+                    <h3>段落詳情</h3>
+                    <div id="segment-detail">
+                        <p class="placeholder-text">選擇一個段落查看詳情</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -57,13 +57,14 @@ float stats_get_loss_rate(const Stats* stats) {
 }
 
 void stats_print(const Stats* stats) {
-    Serial.print(F("[STAT] rx="));
-    Serial.print(stats->packets_received);
-    Serial.print(F(" lost="));
-    Serial.print(stats->packets_lost);
-    Serial.print(F(" rate="));
+    // 統計行以 # 開頭，讓解析器忽略
+    Serial.print(F("#pps="));
     Serial.print(stats->packets_per_sec, 1);
-    Serial.print(F("pps loss="));
-    Serial.print(stats_get_loss_rate(stats) * 100.0f, 2);
+    Serial.print(F(",dropped="));
+    Serial.print(stats->packets_lost);
+    Serial.print(F(",rx="));
+    Serial.print(stats->packets_received);
+    Serial.print(F(",loss="));
+    Serial.print(stats_get_loss_rate(stats) * 100.0f, 1);
     Serial.println(F("%"));
 }

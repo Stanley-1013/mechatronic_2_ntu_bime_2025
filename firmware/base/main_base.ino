@@ -13,51 +13,54 @@
 #define LED_PIN         3        // 狀態 LED
 #define STATS_INTERVAL  5000     // 統計輸出間隔 (ms)
 #define NO_DATA_TIMEOUT 1000     // 無資料超時 (ms)
-#define PRINT_INTERVAL  500      // Serial 輸出間隔 (ms)，設 0 = 每筆都輸出
 
 // 狀態變數
 static SensorPacket packet;
 static Stats stats;
 static unsigned long last_receive_time = 0;
 static unsigned long last_stats_time = 0;
-static unsigned long last_print_time = 0;
 
-// 輸出 CSV 標題
-void print_csv_header() {
-    Serial.println(F("seq,timestamp,btn,m1ax,m1ay,m1az,m1gx,m1gy,m1gz,m2ax,m2ay,m2az,m2gx,m2gy,m2gz"));
-}
-
-// 輸出封包資料（易讀格式）
-void print_packet_live(const SensorPacket* p) {
-    Serial.println(F("--------------------"));
-    Serial.print(F("seq="));
+// 輸出 CSV 資料行（每筆一行，100Hz）
+// 格式: seq,t_remote_ms,btn,ax1,ay1,az1,gx1,gy1,gz1,ax2,ay2,az2,gx2,gy2,gz2
+void print_csv_line(const SensorPacket* p) {
     Serial.print(p->seq);
-    Serial.print(F("  btn="));
-    Serial.println(p->button);
-
-    // MPU1 加速度 (轉換成 g，±2g 量程)
-    Serial.print(F("M1 A: "));
-    Serial.print(p->mpu1_ax / 16384.0, 2);
-    Serial.print(F("g, "));
-    Serial.print(p->mpu1_ay / 16384.0, 2);
-    Serial.print(F("g, "));
-    Serial.print(p->mpu1_az / 16384.0, 2);
-    Serial.println(F("g"));
-
-    // MPU2 加速度
-    Serial.print(F("M2 A: "));
-    Serial.print(p->mpu2_ax / 16384.0, 2);
-    Serial.print(F("g, "));
-    Serial.print(p->mpu2_ay / 16384.0, 2);
-    Serial.print(F("g, "));
-    Serial.print(p->mpu2_az / 16384.0, 2);
-    Serial.println(F("g"));
+    Serial.print(',');
+    Serial.print(p->timestamp);
+    Serial.print(',');
+    Serial.print(p->button);
+    Serial.print(',');
+    // MPU1
+    Serial.print(p->mpu1_ax);
+    Serial.print(',');
+    Serial.print(p->mpu1_ay);
+    Serial.print(',');
+    Serial.print(p->mpu1_az);
+    Serial.print(',');
+    Serial.print(p->mpu1_gx);
+    Serial.print(',');
+    Serial.print(p->mpu1_gy);
+    Serial.print(',');
+    Serial.print(p->mpu1_gz);
+    Serial.print(',');
+    // MPU2
+    Serial.print(p->mpu2_ax);
+    Serial.print(',');
+    Serial.print(p->mpu2_ay);
+    Serial.print(',');
+    Serial.print(p->mpu2_az);
+    Serial.print(',');
+    Serial.print(p->mpu2_gx);
+    Serial.print(',');
+    Serial.print(p->mpu2_gy);
+    Serial.print(',');
+    Serial.println(p->mpu2_gz);
 }
 
 void setup() {
     // 初始化 Serial
     Serial.begin(SERIAL_BAUD);
-    Serial.println(F("Mechtronic Base Station v1.0"));
+    // 狀態訊息以 # 開頭（解析器忽略）
+    Serial.println(F("#Mechtronic Base Station v2.0"));
 
     // 初始化 LED
     pinMode(LED_PIN, OUTPUT);
@@ -65,7 +68,7 @@ void setup() {
 
     // 初始化 RF 接收器
     if (!rf_receiver_init()) {
-        Serial.println(F("[ERROR] RF init failed!"));
+        Serial.println(F("#[ERROR] RF init failed!"));
         while (1) {
             digitalWrite(LED_PIN, HIGH);
             delay(100);
@@ -73,13 +76,13 @@ void setup() {
             delay(100);
         }
     }
-    Serial.println(F("[OK] RF receiver ready"));
+    Serial.println(F("#[OK] RF receiver ready"));
 
     // 初始化統計
     stats_init(&stats);
 
-    // 輸出 CSV 標題
-    print_csv_header();
+    // 輸出 CSV 標題（以 # 開頭，解析器可選擇解析或忽略）
+    Serial.println(F("#seq,t_remote_ms,btn,ax1,ay1,az1,gx1,gy1,gz1,ax2,ay2,az2,gx2,gy2,gz2"));
 
     digitalWrite(LED_PIN, LOW);
     last_receive_time = millis();
@@ -100,17 +103,14 @@ void loop() {
 
         // 驗證協議版本
         if (packet.version != PROTOCOL_VERSION) {
-            Serial.print(F("[WARN] Bad version: "));
+            Serial.print(F("#[WARN] Bad version: "));
             Serial.println(packet.version);
         } else {
             // 更新統計
             stats_update(&stats, packet.seq);
 
-            // 降頻輸出（每 100ms 更新一次顯示）
-            if (now - last_print_time >= PRINT_INTERVAL) {
-                print_packet_live(&packet);
-                last_print_time = now;
-            }
+            // 每筆都輸出 CSV（100Hz）
+            print_csv_line(&packet);
         }
 
         digitalWrite(LED_PIN, LOW);
@@ -119,7 +119,7 @@ void loop() {
     // 更新速率統計
     stats_update_rate(&stats);
 
-    // 定期輸出統計
+    // 定期輸出統計（以 # 開頭）
     if (now - last_stats_time >= STATS_INTERVAL) {
         stats_print(&stats);
         last_stats_time = now;
