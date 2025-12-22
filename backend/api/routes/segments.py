@@ -268,7 +268,7 @@ async def clear_all_segments():
     """
     core = CoreService.get_instance()
     count = len(core.segmenter.segments)
-    core.segmenter.reset()
+    core.segmenter.clear_segments()
 
     return {
         "status": "cleared",
@@ -280,7 +280,7 @@ async def clear_all_segments():
 def clear_segments():
     """清空所有段落（透過 CoreService）"""
     core = CoreService.get_instance()
-    core.segmenter.reset()
+    core.segmenter.clear_segments()
 
 
 def get_all_segments() -> List[ShotSegment]:
