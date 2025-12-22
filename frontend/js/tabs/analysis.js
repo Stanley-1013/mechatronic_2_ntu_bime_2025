@@ -1,10 +1,18 @@
 /**
- * Analysis Tab - Shot segments analysis and visualization
+ * Analysis Tab - Shot segments analysis and visualization with K-means clustering
  */
 
 let scatterChart = null;
 let allSegments = [];
 let selectedSegmentId = null;
+let clusterData = null;
+let showClusters = false;
+
+// Cluster colors
+const CLUSTER_COLORS = [
+    '#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7',
+    '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#6366f1'
+];
 
 /**
  * Initialize Analysis tab
@@ -50,11 +58,19 @@ function initScatterChart() {
             trigger: 'item',
             formatter: (params) => {
                 const data = params.data;
-                return `Shot: ${data.shot_id}<br/>
+                let tooltip = `Shot: ${data.shot_id}<br/>
                         x: ${data.value[0].toFixed(2)}<br/>
                         y: ${data.value[1].toFixed(2)}<br/>
                         Label: ${data.label}`;
+                if (data.cluster_id !== undefined) {
+                    tooltip += `<br/>Cluster: ${data.cluster_id}`;
+                }
+                return tooltip;
             }
+        },
+        legend: {
+            show: false,
+            textStyle: { color: '#f3f4f6' }
         },
         xAxis: {
             name: 'g1_rms',
@@ -90,6 +106,9 @@ function initScatterChart() {
             data: [],
             itemStyle: {
                 color: (params) => {
+                    if (showClusters && params.data.cluster_id !== undefined) {
+                        return CLUSTER_COLORS[params.data.cluster_id % CLUSTER_COLORS.length];
+                    }
                     return params.data.label === 'good' ? '#10b981' : '#6b7280';
                 }
             }
@@ -120,6 +139,8 @@ function setupControls() {
     const scatterX = document.getElementById('scatter-x');
     const scatterY = document.getElementById('scatter-y');
     const refreshBtn = document.getElementById('scatter-refresh');
+    const clusterBtn = document.getElementById('btn-cluster');
+    const clusterCount = document.getElementById('cluster-count');
 
     // Filter checkboxes
     if (filterGood) {
@@ -137,12 +158,16 @@ function setupControls() {
     // Scatter axis selects
     if (scatterX) {
         scatterX.addEventListener('change', () => {
+            clusterData = null;
+            showClusters = false;
             updateScatterChart();
         });
     }
 
     if (scatterY) {
         scatterY.addEventListener('change', () => {
+            clusterData = null;
+            showClusters = false;
             updateScatterChart();
         });
     }
@@ -150,7 +175,17 @@ function setupControls() {
     // Refresh button
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
+            clusterData = null;
+            showClusters = false;
             loadSegments();
+        });
+    }
+
+    // Cluster button
+    if (clusterBtn) {
+        clusterBtn.addEventListener('click', () => {
+            const n = clusterCount ? parseInt(clusterCount.value) : 3;
+            runClustering(n);
         });
     }
 }
@@ -162,8 +197,6 @@ async function loadSegments() {
     try {
         console.log('[Analysis] Loading segments...');
 
-        // TODO: Replace with actual API call
-        // For now, use mock data
         const response = await fetch('/api/segments');
 
         if (!response.ok) {
@@ -176,14 +209,127 @@ async function loadSegments() {
         // Update UI
         updateSegmentsList();
         updateScatterChart();
+        updateStats();
 
     } catch (error) {
         console.error('[Analysis] Failed to load segments:', error);
 
-        // Use mock data for development
-        allSegments = generateMockSegments();
+        // Show empty state
+        allSegments = [];
         updateSegmentsList();
         updateScatterChart();
+    }
+}
+
+/**
+ * Run K-means clustering
+ * @param {number} nClusters - Number of clusters
+ */
+async function runClustering(nClusters) {
+    const scatterX = document.getElementById('scatter-x');
+    const scatterY = document.getElementById('scatter-y');
+
+    const xKey = scatterX ? scatterX.value : 'g1_rms';
+    const yKey = scatterY ? scatterY.value : 'dg_rms';
+
+    try {
+        console.log(`[Analysis] Running K-means with ${nClusters} clusters...`);
+
+        const response = await fetch('/api/segments/cluster', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                n_clusters: nClusters,
+                features: [xKey, yKey]
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        clusterData = await response.json();
+        showClusters = true;
+
+        console.log(`[Analysis] Clustering complete: ${clusterData.clusters.length} clusters`);
+
+        // Update chart with cluster colors
+        updateScatterChart();
+
+        // Show cluster info
+        displayClusterInfo();
+
+    } catch (error) {
+        console.error('[Analysis] Clustering failed:', error);
+        alert(`分群失敗: ${error.message}`);
+    }
+}
+
+/**
+ * Display cluster information
+ */
+function displayClusterInfo() {
+    if (!clusterData) return;
+
+    const container = document.getElementById('segment-detail');
+    if (!container) return;
+
+    const clustersHtml = clusterData.clusters.map((cluster, idx) => {
+        const color = CLUSTER_COLORS[idx % CLUSTER_COLORS.length];
+        return `
+            <tr>
+                <td><span style="display:inline-block;width:12px;height:12px;background:${color};border-radius:50%;margin-right:8px;"></span>Cluster ${cluster.cluster_id}</td>
+                <td>${cluster.count} shots</td>
+            </tr>
+            <tr>
+                <td style="padding-left:24px;">Good ratio:</td>
+                <td>${(cluster.good_ratio * 100).toFixed(1)}%</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="detail-content">
+            <h4>K-means 分群結果</h4>
+            <p>共 ${clusterData.n_clusters} 群，${clusterData.total_segments} 筆資料</p>
+            <table>
+                ${clustersHtml}
+            </table>
+            <h4 style="margin-top:1rem;">群心座標</h4>
+            <table>
+                ${clusterData.clusters.map((cluster, idx) => {
+                    const centerStr = Object.entries(cluster.center)
+                        .map(([k, v]) => `${k}: ${v.toFixed(2)}`)
+                        .join(', ');
+                    return `<tr><td>Cluster ${cluster.cluster_id}:</td><td>${centerStr}</td></tr>`;
+                }).join('')}
+            </table>
+        </div>
+    `;
+}
+
+/**
+ * Update statistics display
+ */
+async function updateStats() {
+    try {
+        const response = await fetch('/api/segments/stats');
+        if (!response.ok) return;
+
+        const stats = await response.json();
+
+        // Update stats display if elements exist
+        const totalEl = document.getElementById('stat-total');
+        const goodEl = document.getElementById('stat-good');
+        const unknownEl = document.getElementById('stat-unknown');
+
+        if (totalEl) totalEl.textContent = stats.total;
+        if (goodEl) goodEl.textContent = stats.good;
+        if (unknownEl) unknownEl.textContent = stats.unknown;
+
+    } catch (error) {
+        console.error('[Analysis] Failed to load stats:', error);
     }
 }
 
@@ -212,17 +358,29 @@ function updateSegmentsList() {
         return;
     }
 
+    // Get cluster assignment map
+    const clusterMap = {};
+    if (clusterData && clusterData.assignments) {
+        clusterData.assignments.forEach(a => {
+            clusterMap[a.shot_id] = a.cluster_id;
+        });
+    }
+
     // Render segments
     container.innerHTML = filtered.map(seg => {
         const isSelected = seg.shot_id === selectedSegmentId;
         const features = seg.features || {};
+        const clusterId = clusterMap[seg.shot_id];
+        const clusterColor = clusterId !== undefined ? CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length] : null;
 
         return `
             <div class="segment-item ${isSelected ? 'selected' : ''} label-${seg.label}"
-                 data-shot-id="${seg.shot_id}">
+                 data-shot-id="${seg.shot_id}"
+                 style="${clusterColor && showClusters ? `border-left-color: ${clusterColor}` : ''}">
                 <div class="segment-item-header">
                     <span class="segment-item-id">${seg.shot_id.substring(0, 8)}</span>
                     <span class="segment-label label-${seg.label}">${seg.label}</span>
+                    ${clusterId !== undefined && showClusters ? `<span style="font-size:0.75rem;color:${clusterColor};">C${clusterId}</span>` : ''}
                 </div>
                 <div class="segment-item-features">
                     Dur: ${seg.duration_ms}ms |
@@ -258,10 +416,17 @@ function updateScatterChart() {
     const xLabel = getFeatureLabel(xKey);
     const yLabel = getFeatureLabel(yKey);
 
+    // Get cluster assignment map
+    const clusterMap = {};
+    if (clusterData && clusterData.assignments) {
+        clusterData.assignments.forEach(a => {
+            clusterMap[a.shot_id] = a.cluster_id;
+        });
+    }
+
     // Transform data
     const scatterData = allSegments
         .map(seg => {
-            const features = seg.features || {};
             const xVal = getFeatureValue(seg, xKey);
             const yVal = getFeatureValue(seg, yKey);
 
@@ -270,7 +435,8 @@ function updateScatterChart() {
             return {
                 value: [xVal, yVal],
                 shot_id: seg.shot_id,
-                label: seg.label
+                label: seg.label,
+                cluster_id: clusterMap[seg.shot_id]
             };
         })
         .filter(d => d !== null);
@@ -284,11 +450,19 @@ function updateScatterChart() {
             name: yLabel
         },
         series: [{
-            data: scatterData
+            data: scatterData,
+            itemStyle: {
+                color: (params) => {
+                    if (showClusters && params.data.cluster_id !== undefined) {
+                        return CLUSTER_COLORS[params.data.cluster_id % CLUSTER_COLORS.length];
+                    }
+                    return params.data.label === 'good' ? '#10b981' : '#6b7280';
+                }
+            }
         }]
     });
 
-    console.log(`[Analysis] Scatter chart updated (${scatterData.length} points)`);
+    console.log(`[Analysis] Scatter chart updated (${scatterData.length} points, clusters: ${showClusters})`);
 }
 
 /**
@@ -300,7 +474,7 @@ function updateScatterChart() {
 function getFeatureValue(seg, key) {
     const features = seg.features || {};
 
-    if (key === 'dur') {
+    if (key === 'dur' || key === 'duration_ms') {
         return seg.duration_ms;
     }
 
@@ -319,7 +493,8 @@ function getFeatureLabel(key) {
         'g2_rms': 'Gyro2 RMS (deg/s)',
         'g2_peak': 'Gyro2 Peak (deg/s)',
         'dg_rms': 'Delta RMS (deg/s)',
-        'dur': 'Duration (ms)'
+        'dur': 'Duration (ms)',
+        'duration_ms': 'Duration (ms)'
     };
 
     return labels[key] || key;
@@ -352,6 +527,22 @@ function displaySegmentDetail(segment) {
 
     const features = segment.features || {};
 
+    // Get cluster info if available
+    let clusterInfo = '';
+    if (clusterData && clusterData.assignments) {
+        const assignment = clusterData.assignments.find(a => a.shot_id === segment.shot_id);
+        if (assignment) {
+            const cluster = clusterData.clusters[assignment.cluster_id];
+            const color = CLUSTER_COLORS[assignment.cluster_id % CLUSTER_COLORS.length];
+            clusterInfo = `
+                <tr>
+                    <td>分群:</td>
+                    <td><span style="color:${color};">Cluster ${assignment.cluster_id}</span> (Good率: ${(cluster.good_ratio * 100).toFixed(1)}%)</td>
+                </tr>
+            `;
+        }
+    }
+
     container.innerHTML = `
         <div class="detail-content">
             <h4>基本資訊</h4>
@@ -372,6 +563,7 @@ function displaySegmentDetail(segment) {
                     <td>樣本數:</td>
                     <td>${segment.sample_count || 'N/A'}</td>
                 </tr>
+                ${clusterInfo}
             </table>
 
             <h4>特徵</h4>
@@ -399,37 +591,4 @@ function displaySegmentDetail(segment) {
             </table>
         </div>
     `;
-}
-
-/**
- * Generate mock segments for development
- * @returns {Array} Mock segments
- */
-function generateMockSegments() {
-    const segments = [];
-
-    for (let i = 0; i < 20; i++) {
-        const label = Math.random() > 0.3 ? 'good' : 'unknown';
-        const g1_rms = Math.random() * 100 + 50;
-        const g2_rms = Math.random() * 80 + 40;
-        const dg_rms = Math.abs(g1_rms - g2_rms) * (0.8 + Math.random() * 0.4);
-
-        segments.push({
-            shot_id: `shot_${i.toString().padStart(3, '0')}_${Date.now()}`,
-            t_start_ms: Date.now() - (20 - i) * 5000,
-            t_end_ms: Date.now() - (20 - i) * 5000 + 800,
-            duration_ms: 600 + Math.floor(Math.random() * 400),
-            label: label,
-            sample_count: 60 + Math.floor(Math.random() * 40),
-            features: {
-                g1_rms: g1_rms,
-                g1_peak: g1_rms * (1.5 + Math.random() * 0.5),
-                g2_rms: g2_rms,
-                g2_peak: g2_rms * (1.5 + Math.random() * 0.5),
-                dg_rms: dg_rms
-            }
-        });
-    }
-
-    return segments;
 }
