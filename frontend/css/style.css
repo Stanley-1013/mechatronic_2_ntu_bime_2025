@@ -168,10 +168,10 @@ main {
 /* Ensure charts fill their containers */
 .chart-card {
     overflow: hidden;
+    min-width: 0;
 }
 
-.chart-card #live-chart,
-.chart-card #replay-chart {
+.chart-card #live-chart {
     width: 100% !important;
     height: 350px !important;
 }
@@ -191,6 +191,13 @@ main {
 
 .replay-grid .chart-card {
     grid-column: 1 / -1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.replay-grid .chart-card #replay-chart {
+    width: 100% !important;
+    height: 350px !important;
 }
 
 /* Analysis Grid Layout - Larger chart, better spacing */
@@ -220,12 +227,13 @@ main {
     grid-column: 2;
     grid-row: 1 / 3;
     min-height: 550px;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .analysis-grid .scatter-panel #scatter-chart {
     width: 100% !important;
     height: 480px !important;
-    min-width: 0;
 }
 
 .analysis-grid .detail-panel {
@@ -306,6 +314,31 @@ main {
     font-size: 1.875rem;
     font-weight: 700;
     color: var(--primary);
+}
+
+/* Serial Controls */
+.serial-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.serial-controls select {
+    flex: 1;
+    min-width: 180px;
+    max-width: 250px;
+}
+
+.serial-status {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+    min-height: 1.25rem;
+}
+
+.serial-status:not(:empty) {
+    color: var(--success);
 }
 
 /* Recording Controls - FIXED: Better layout */

@@ -92,13 +92,37 @@ class MechtronicApp {
             case 'replay':
                 // Pause live updates
                 this.tabs.live?.deactivate();
+                // Resize ECharts after tab becomes visible
+                setTimeout(() => this.resizeCharts('replay'), 50);
                 break;
 
             case 'analysis':
                 // Pause live updates
                 this.tabs.live?.deactivate();
+                // Resize ECharts after tab becomes visible
+                setTimeout(() => this.resizeCharts('analysis'), 50);
                 break;
         }
+    }
+
+    /**
+     * Resize charts in a specific tab
+     * @param {string} tabName - Tab name
+     */
+    resizeCharts(tabName) {
+        // Find all ECharts instances in the tab and resize them
+        const tabEl = document.getElementById(`tab-${tabName}`);
+        if (!tabEl) return;
+
+        // Get all chart containers that might have ECharts instances
+        const chartContainers = tabEl.querySelectorAll('[id$="-chart"]');
+        chartContainers.forEach(container => {
+            const chartInstance = echarts.getInstanceByDom(container);
+            if (chartInstance) {
+                console.log(`[App] Resizing chart: ${container.id}`);
+                chartInstance.resize();
+            }
+        });
     }
 
     /**

@@ -276,6 +276,121 @@ async def clear_all_segments():
     }
 
 
+@router.post("/analyze-session/{session_id}")
+async def analyze_session_segments(session_id: str):
+    """
+    從 session 載入資料並重新切段分析
+
+    Args:
+        session_id: Session ID
+
+    Returns:
+        dict: 分析結果，包含找到的段落
+
+    Raises:
+        HTTPException 404: Session 不存在
+        HTTPException 500: 分析失敗
+    """
+    from pathlib import Path
+    import csv
+    from services.processor import ProcessedSample
+    from services.segmenter import Segmenter
+
+    core = CoreService.get_instance()
+
+    # 找到 session 目錄
+    base_dir = Path("recordings")
+    session_dir = base_dir / session_id
+
+    # 支援兩種 metadata 檔名
+    meta_path = session_dir / "meta.json"
+    if not meta_path.exists():
+        meta_path = session_dir / "metadata.json"
+
+    data_path = session_dir / "data.csv"
+
+    if not session_dir.exists() or not data_path.exists():
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    try:
+        # 讀取 CSV 資料
+        samples = []
+        with open(data_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # 將字串轉為適當類型
+                sample = {}
+                for k, v in row.items():
+                    try:
+                        if '.' in str(v):
+                            sample[k] = float(v)
+                        else:
+                            sample[k] = int(v)
+                    except ValueError:
+                        sample[k] = v
+                samples.append(sample)
+
+        if not samples:
+            raise HTTPException(status_code=400, detail="Session has no data")
+
+        # 創建獨立的 Segmenter 進行分析
+        segmenter = Segmenter()
+
+        # 將 CSV 資料轉換為 ProcessedSample 並送入 segmenter
+        for row in samples:
+            # 建構 ProcessedSample
+            processed = ProcessedSample(
+                seq=row.get('seq', 0),
+                t_remote_ms=row.get('t_remote_ms', 0),
+                t_received_ns=0,
+                btn=row.get('btn', 0),
+                # MPU1
+                ax1_g=row.get('ax1_g', 0),
+                ay1_g=row.get('ay1_g', 0),
+                az1_g=row.get('az1_g', 0),
+                gx1_dps=row.get('gx1_dps', 0),
+                gy1_dps=row.get('gy1_dps', 0),
+                gz1_dps=row.get('gz1_dps', 0),
+                # MPU2
+                ax2_g=row.get('ax2_g', 0),
+                ay2_g=row.get('ay2_g', 0),
+                az2_g=row.get('az2_g', 0),
+                gx2_dps=row.get('gx2_dps', 0),
+                gy2_dps=row.get('gy2_dps', 0),
+                gz2_dps=row.get('gz2_dps', 0),
+                # 計算值
+                g1_mag=row.get('g1_mag', 0),
+                g2_mag=row.get('g2_mag', 0),
+                a1_mag=row.get('a1_mag', 0),
+                a2_mag=row.get('a2_mag', 0),
+            )
+
+            # 送入 segmenter
+            segmenter.process(processed)
+
+        # 取得所有分析出的段落
+        all_segments = segmenter.segments
+
+        # 清空現有段落，換成分析結果
+        core.segmenter.clear_segments()
+
+        # 將分析結果加入 core.segmenter
+        for seg in all_segments:
+            core.segmenter._segments.append(seg)
+
+        return {
+            "session_id": session_id,
+            "sample_count": len(samples),
+            "segments_found": len(all_segments),
+            "segments": [_segment_to_dict(seg) for seg in all_segments]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
 # 輔助函數：供其他模組呼叫
 def clear_segments():
     """清空所有段落（透過 CoreService）"""

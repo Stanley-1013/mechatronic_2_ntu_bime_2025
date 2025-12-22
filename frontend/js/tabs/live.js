@@ -13,6 +13,7 @@ let recordingName = '';
 let recordingStartTime = null;
 let recordingTimerInterval = null;
 let recordingSampleCount = 0;
+let isSerialConnected = false;
 
 // Data buffers
 const WINDOW_SECONDS = 10; // Display last 10 seconds
@@ -50,11 +51,17 @@ export function initLiveTab() {
     // Initialize chart
     initChart();
 
-    // Initialize controls
+    // Initialize Serial controls
+    initSerialControls();
+
+    // Initialize recording controls
     initControls();
 
     // Subscribe to WebSocket messages
     unsubscribe = onMessage(handleMessage);
+
+    // Check Serial status on init
+    checkSerialStatus();
 
     return {
         isActive,
@@ -99,6 +106,186 @@ function initChart() {
     );
 
     console.log('[Live] Chart initialized');
+}
+
+/**
+ * Initialize Serial port controls
+ */
+function initSerialControls() {
+    const portSelect = document.getElementById('serial-port');
+    const btnRefresh = document.getElementById('btn-refresh-ports');
+    const btnConnect = document.getElementById('btn-serial-connect');
+    const btnDisconnect = document.getElementById('btn-serial-disconnect');
+
+    if (!portSelect || !btnRefresh || !btnConnect || !btnDisconnect) {
+        console.warn('[Live] Serial control elements not found');
+        return;
+    }
+
+    // Refresh ports button
+    btnRefresh.addEventListener('click', () => refreshSerialPorts());
+
+    // Connect button
+    btnConnect.addEventListener('click', async () => {
+        const port = portSelect.value;
+        if (!port) {
+            alert('Please select a Serial port');
+            return;
+        }
+        await connectSerial(port);
+    });
+
+    // Disconnect button
+    btnDisconnect.addEventListener('click', async () => {
+        await disconnectSerial();
+    });
+
+    // Initial port list refresh
+    refreshSerialPorts();
+
+    console.log('[Live] Serial controls initialized');
+}
+
+/**
+ * Refresh available Serial ports
+ */
+async function refreshSerialPorts() {
+    const portSelect = document.getElementById('serial-port');
+    if (!portSelect) return;
+
+    try {
+        const response = await fetch('/api/serial/ports');
+        if (!response.ok) throw new Error('Failed to fetch ports');
+
+        const data = await response.json();
+        const ports = data.ports || [];
+
+        // Clear existing options
+        portSelect.innerHTML = '<option value="">-- 選擇 Port --</option>';
+
+        // Add port options
+        ports.forEach(port => {
+            const option = document.createElement('option');
+            option.value = port.device;
+            option.textContent = `${port.device} - ${port.description}`;
+            portSelect.appendChild(option);
+        });
+
+        console.log('[Live] Serial ports refreshed:', ports.length, 'ports found');
+    } catch (error) {
+        console.error('[Live] Failed to refresh ports:', error);
+    }
+}
+
+/**
+ * Connect to Serial port
+ * @param {string} port - Serial port path
+ */
+async function connectSerial(port) {
+    const statusEl = document.getElementById('serial-status');
+
+    try {
+        if (statusEl) statusEl.textContent = 'Connecting...';
+
+        const response = await fetch(`/api/serial/connect?port=${encodeURIComponent(port)}&baudrate=115200`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('[Live] Serial connected:', result);
+
+        isSerialConnected = true;
+        updateSerialUI();
+
+        if (statusEl) statusEl.textContent = `Connected to ${port}`;
+    } catch (error) {
+        console.error('[Live] Failed to connect Serial:', error);
+        if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+        alert(`Serial connection failed: ${error.message}`);
+    }
+}
+
+/**
+ * Disconnect from Serial port
+ */
+async function disconnectSerial() {
+    const statusEl = document.getElementById('serial-status');
+
+    try {
+        const response = await fetch('/api/serial/disconnect', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+
+        console.log('[Live] Serial disconnected');
+
+        isSerialConnected = false;
+        updateSerialUI();
+
+        if (statusEl) statusEl.textContent = 'Disconnected';
+    } catch (error) {
+        console.error('[Live] Failed to disconnect Serial:', error);
+        if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+    }
+}
+
+/**
+ * Check Serial connection status
+ */
+async function checkSerialStatus() {
+    try {
+        const response = await fetch('/api/serial/status');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        isSerialConnected = data.connected || false;
+
+        updateSerialUI();
+
+        const statusEl = document.getElementById('serial-status');
+        if (statusEl) {
+            if (isSerialConnected && data.port) {
+                statusEl.textContent = `Connected to ${data.port}`;
+            } else {
+                statusEl.textContent = '';
+            }
+        }
+    } catch (error) {
+        console.error('[Live] Failed to check Serial status:', error);
+    }
+}
+
+/**
+ * Update Serial UI state
+ */
+function updateSerialUI() {
+    const portSelect = document.getElementById('serial-port');
+    const btnRefresh = document.getElementById('btn-refresh-ports');
+    const btnConnect = document.getElementById('btn-serial-connect');
+    const btnDisconnect = document.getElementById('btn-serial-disconnect');
+
+    if (!portSelect || !btnRefresh || !btnConnect || !btnDisconnect) return;
+
+    if (isSerialConnected) {
+        portSelect.disabled = true;
+        btnRefresh.disabled = true;
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+    } else {
+        portSelect.disabled = false;
+        btnRefresh.disabled = false;
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+    }
 }
 
 /**

@@ -29,6 +29,20 @@
     <main>
         <section id="tab-live" class="tab-content active">
             <div class="live-grid">
+                <!-- Serial 連接控制 -->
+                <div class="card serial-card">
+                    <h3>Serial 連線</h3>
+                    <div class="serial-controls">
+                        <select id="serial-port">
+                            <option value="">-- 選擇 Port --</option>
+                        </select>
+                        <button id="btn-refresh-ports" class="btn btn-sm">🔄</button>
+                        <button id="btn-serial-connect" class="btn btn-primary">連接</button>
+                        <button id="btn-serial-disconnect" class="btn btn-danger" disabled>斷開</button>
+                    </div>
+                    <div id="serial-status" class="serial-status"></div>
+                </div>
+
                 <!-- 統計卡片 -->
                 <div class="card stats-card">
                     <h3>連線狀態</h3>

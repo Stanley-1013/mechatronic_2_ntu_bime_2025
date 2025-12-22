@@ -271,14 +271,27 @@ function formatDate(dateStr) {
  */
 async function loadSessionSegments(sessionId) {
     try {
-        console.log(`[Analysis] Loading segments from session ${sessionId}...`);
+        console.log(`[Analysis] Analyzing session ${sessionId}...`);
 
-        // TODO: Backend needs to support loading segments from session
-        // For now, we'll show a message
-        alert('從錄製 Session 載入段落功能開發中');
+        // 呼叫後端 API 分析 session 資料並產生段落
+        const response = await fetch(`/api/segments/analyze-session/${sessionId}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log(`[Analysis] Session analyzed: ${result.segments_found} segments found from ${result.sample_count} samples`);
+
+        // 重新載入段落列表
+        await loadSegments();
 
     } catch (error) {
-        console.error('[Analysis] Failed to load session segments:', error);
+        console.error('[Analysis] Failed to analyze session:', error);
+        alert(`分析 Session 失敗: ${error.message}`);
     }
 }
 
