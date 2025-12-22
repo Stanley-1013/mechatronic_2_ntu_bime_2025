@@ -258,6 +258,24 @@ async def get_segment_stats():
     }
 
 
+@router.post("/clear")
+async def clear_all_segments():
+    """
+    清空所有段落
+
+    Returns:
+        dict: 清除結果
+    """
+    core = CoreService.get_instance()
+    count = len(core.segmenter.segments)
+    core.segmenter.reset()
+
+    return {
+        "status": "cleared",
+        "cleared_count": count
+    }
+
+
 # 輔助函數：供其他模組呼叫
 def clear_segments():
     """清空所有段落（透過 CoreService）"""

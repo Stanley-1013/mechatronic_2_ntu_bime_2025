@@ -2,11 +2,15 @@
  * Analysis Tab - Shot segments analysis and visualization with K-means clustering
  */
 
+import { getSessions } from '../api.js';
+
 let scatterChart = null;
 let allSegments = [];
 let selectedSegmentId = null;
 let clusterData = null;
 let showClusters = false;
+let currentSource = 'live'; // 'live' or 'session'
+let currentSessionId = null;
 
 // Cluster colors
 const CLUSTER_COLORS = [
@@ -26,6 +30,9 @@ export function initAnalysisTab() {
 
     // Setup controls
     setupControls();
+
+    // Load sessions list for dropdown
+    loadSessionsList();
 
     // Load segments
     loadSegments();
@@ -141,6 +148,42 @@ function setupControls() {
     const refreshBtn = document.getElementById('scatter-refresh');
     const clusterBtn = document.getElementById('btn-cluster');
     const clusterCount = document.getElementById('cluster-count');
+    const sourceSelect = document.getElementById('analysis-source');
+    const sessionSelect = document.getElementById('analysis-session');
+    const clearBtn = document.getElementById('btn-clear-segments');
+
+    // Data source selection
+    if (sourceSelect) {
+        sourceSelect.addEventListener('change', (e) => {
+            currentSource = e.target.value;
+            if (currentSource === 'session') {
+                sessionSelect.style.display = 'inline-block';
+            } else {
+                sessionSelect.style.display = 'none';
+                currentSessionId = null;
+                loadSegments();
+            }
+        });
+    }
+
+    // Session selection
+    if (sessionSelect) {
+        sessionSelect.addEventListener('change', (e) => {
+            currentSessionId = e.target.value;
+            if (currentSessionId) {
+                loadSessionSegments(currentSessionId);
+            }
+        });
+    }
+
+    // Clear segments button
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async () => {
+            if (confirm('確定要清除所有段落資料嗎？')) {
+                await clearAllSegments();
+            }
+        });
+    }
 
     // Filter checkboxes
     if (filterGood) {
@@ -187,6 +230,82 @@ function setupControls() {
             const n = clusterCount ? parseInt(clusterCount.value) : 3;
             runClustering(n);
         });
+    }
+}
+
+/**
+ * Load sessions list for dropdown
+ */
+async function loadSessionsList() {
+    const sessionSelect = document.getElementById('analysis-session');
+    if (!sessionSelect) return;
+
+    try {
+        const sessions = await getSessions();
+
+        // Clear existing options except first
+        sessionSelect.innerHTML = '<option value="">-- 選擇 Session --</option>';
+
+        sessions.forEach(session => {
+            const option = document.createElement('option');
+            option.value = session.id;
+            option.textContent = `${session.name || session.id} (${formatDate(session.created_at)})`;
+            sessionSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('[Analysis] Failed to load sessions:', error);
+    }
+}
+
+/**
+ * Format date string
+ */
+function formatDate(dateStr) {
+    if (!dateStr) return 'N/A';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('zh-TW');
+}
+
+/**
+ * Load segments from a specific session
+ */
+async function loadSessionSegments(sessionId) {
+    try {
+        console.log(`[Analysis] Loading segments from session ${sessionId}...`);
+
+        // TODO: Backend needs to support loading segments from session
+        // For now, we'll show a message
+        alert('從錄製 Session 載入段落功能開發中');
+
+    } catch (error) {
+        console.error('[Analysis] Failed to load session segments:', error);
+    }
+}
+
+/**
+ * Clear all segments
+ */
+async function clearAllSegments() {
+    try {
+        const response = await fetch('/api/segments/clear', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        console.log('[Analysis] All segments cleared');
+        allSegments = [];
+        clusterData = null;
+        showClusters = false;
+        updateSegmentsList();
+        updateScatterChart();
+        updateStats();
+
+    } catch (error) {
+        console.error('[Analysis] Failed to clear segments:', error);
+        alert(`清除失敗: ${error.message}`);
     }
 }
 

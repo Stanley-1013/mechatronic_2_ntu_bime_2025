@@ -121,6 +121,29 @@
         </section>
 
         <section id="tab-analysis" class="tab-content">
+            <!-- 控制列 -->
+            <div class="analysis-controls-bar">
+                <div class="control-group">
+                    <label>資料來源:</label>
+                    <select id="analysis-source">
+                        <option value="live">即時資料</option>
+                        <option value="session">錄製 Session</option>
+                    </select>
+                    <select id="analysis-session" style="display:none; min-width:200px;">
+                        <option value="">-- 選擇 Session --</option>
+                    </select>
+                </div>
+                <div class="separator"></div>
+                <div class="control-group">
+                    <button id="btn-clear-segments" class="btn btn-sm btn-outline">清除全部段落</button>
+                </div>
+                <div class="control-group" style="margin-left:auto;">
+                    <span id="analysis-stats" style="font-size:0.875rem;color:#9ca3af;">
+                        共 <span id="stat-total">0</span> 段 | Good: <span id="stat-good">0</span> | Unknown: <span id="stat-unknown">0</span>
+                    </span>
+                </div>
+            </div>
+
             <div class="analysis-grid">
                 <!-- 段落列表 -->
                 <div class="card segments-panel">
@@ -147,13 +170,13 @@
                             <option value="g2_rms">g2_rms</option>
                             <option value="g2_peak">g2_peak</option>
                         </select>
-                        <button id="scatter-refresh" class="btn">刷新</button>
+                        <button id="scatter-refresh" class="btn btn-sm">刷新</button>
                         <span class="cluster-controls">
                             <input type="number" id="cluster-count" min="2" max="10" value="3" style="width:50px;">
-                            <button id="btn-cluster" class="btn btn-primary">K-means</button>
+                            <button id="btn-cluster" class="btn btn-sm btn-primary">K-means</button>
                         </span>
                     </div>
-                    <div id="scatter-chart" style="width:100%;height:400px;"></div>
+                    <div id="scatter-chart" style="width:100%;height:480px;"></div>
                 </div>
 
                 <!-- 段落詳情 -->

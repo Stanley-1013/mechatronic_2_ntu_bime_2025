@@ -223,8 +223,10 @@ class Player:
 
                 current_sample = self._samples[self._current_index]
 
-                # 呼叫 callback
-                on_sample(current_sample)
+                # 呼叫 callback（支援 async 和 sync）
+                result = on_sample(current_sample)
+                if asyncio.iscoroutine(result):
+                    await result
 
                 # 計算下一筆的延遲時間
                 if self._current_index + 1 < len(self._samples):
