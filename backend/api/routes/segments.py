@@ -52,6 +52,49 @@ async def list_segments():
     return [_segment_to_dict(seg) for seg in segments]
 
 
+@router.get("/stats")
+async def get_segment_stats():
+    """
+    取得段落統計
+
+    Returns:
+        dict: 統計資訊
+    """
+    segments = _get_segments()
+
+    total = len(segments)
+    good = sum(1 for seg in segments if seg.label == 'good')
+    bad = sum(1 for seg in segments if seg.label == 'bad')
+    unknown = sum(1 for seg in segments if seg.label == 'unknown')
+
+    # 特徵統計
+    durations = [seg.duration_ms for seg in segments]
+    g1_rms_values = [seg.features.get('g1_rms', 0) for seg in segments if seg.features]
+    dg_rms_values = [seg.features.get('dg_rms', 0) for seg in segments if seg.features]
+
+    return {
+        "total": total,
+        "good": good,
+        "bad": bad,
+        "unknown": unknown,
+        "duration": {
+            "min": min(durations) if durations else 0,
+            "max": max(durations) if durations else 0,
+            "avg": sum(durations) / len(durations) if durations else 0
+        },
+        "g1_rms": {
+            "min": min(g1_rms_values) if g1_rms_values else 0,
+            "max": max(g1_rms_values) if g1_rms_values else 0,
+            "avg": sum(g1_rms_values) / len(g1_rms_values) if g1_rms_values else 0
+        },
+        "dg_rms": {
+            "min": min(dg_rms_values) if dg_rms_values else 0,
+            "max": max(dg_rms_values) if dg_rms_values else 0,
+            "avg": sum(dg_rms_values) / len(dg_rms_values) if dg_rms_values else 0
+        }
+    }
+
+
 @router.get("/{segment_id}")
 async def get_segment(segment_id: str):
     """
@@ -212,49 +255,6 @@ async def cluster_segments(req: ClusterRequest):
         "total_segments": len(valid_segments),
         "clusters": clusters,
         "assignments": assignments
-    }
-
-
-@router.get("/stats")
-async def get_segment_stats():
-    """
-    取得段落統計
-
-    Returns:
-        dict: 統計資訊
-    """
-    segments = _get_segments()
-
-    total = len(segments)
-    good = sum(1 for seg in segments if seg.label == 'good')
-    bad = sum(1 for seg in segments if seg.label == 'bad')
-    unknown = sum(1 for seg in segments if seg.label == 'unknown')
-
-    # 特徵統計
-    durations = [seg.duration_ms for seg in segments]
-    g1_rms_values = [seg.features.get('g1_rms', 0) for seg in segments if seg.features]
-    dg_rms_values = [seg.features.get('dg_rms', 0) for seg in segments if seg.features]
-
-    return {
-        "total": total,
-        "good": good,
-        "bad": bad,
-        "unknown": unknown,
-        "duration": {
-            "min": min(durations) if durations else 0,
-            "max": max(durations) if durations else 0,
-            "avg": sum(durations) / len(durations) if durations else 0
-        },
-        "g1_rms": {
-            "min": min(g1_rms_values) if g1_rms_values else 0,
-            "max": max(g1_rms_values) if g1_rms_values else 0,
-            "avg": sum(g1_rms_values) / len(g1_rms_values) if g1_rms_values else 0
-        },
-        "dg_rms": {
-            "min": min(dg_rms_values) if dg_rms_values else 0,
-            "max": max(dg_rms_values) if dg_rms_values else 0,
-            "avg": sum(dg_rms_values) / len(dg_rms_values) if dg_rms_values else 0
-        }
     }
 
 
