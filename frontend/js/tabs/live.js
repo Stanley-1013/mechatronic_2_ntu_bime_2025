@@ -354,9 +354,11 @@ function showLabelFeedback(shotId, label) {
 
     document.body.appendChild(toast);
 
-    // Remove after animation
+    // Remove after animation (check if element still exists in DOM)
     setTimeout(() => {
-        toast.remove();
+        if (toast.parentNode) {
+            toast.remove();
+        }
     }, 3000);
 }
 

@@ -106,7 +106,7 @@ class Labeler:
             return None
 
         # DEBUG: Log button press detection
-        logger.info(f"[Labeler] Button press detected! btn={current_level}, t={current_time_ms}ms")
+        logger.debug(f"[Labeler] Button press detected! btn={current_level}, t={current_time_ms}ms")
 
         # 去抖檢查（FR-L1: 250ms 冷卻）
         if self._last_press_time_ms is not None:

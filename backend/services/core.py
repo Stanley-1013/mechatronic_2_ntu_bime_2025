@@ -181,17 +181,27 @@ class CoreService:
 
     async def _recording_status_push_loop(self):
         """定期推送錄製狀態到 WebSocket"""
-        while self.recorder.is_recording:
-            try:
-                if self._ws_manager:
-                    await self._ws_manager.send_recording_status(
-                        is_recording=True,
-                        session_name=self.recorder.current_session,
-                        sample_count=self.recorder.sample_count
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to push recording status: {e}")
-            await asyncio.sleep(0.5)  # 每 0.5 秒推送一次
+        try:
+            while True:
+                # 檢查錄製狀態後立即處理，避免 race condition
+                if not self.recorder.is_recording:
+                    break
+                try:
+                    if self._ws_manager:
+                        await self._ws_manager.send_recording_status(
+                            is_recording=True,
+                            session_name=self.recorder.current_session,
+                            sample_count=self.recorder.sample_count
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to push recording status: {e}")
+
+                try:
+                    await asyncio.sleep(0.5)  # 每 0.5 秒推送一次
+                except asyncio.CancelledError:
+                    break
+        except asyncio.CancelledError:
+            logger.debug("Recording status push loop cancelled")
 
     def _schedule_async(self, coro):
         """
