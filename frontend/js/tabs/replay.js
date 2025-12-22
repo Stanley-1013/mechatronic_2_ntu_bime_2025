@@ -3,10 +3,26 @@
  */
 
 import { getSessions, getSession } from '../api.js';
+import { onMessage } from '../websocket.js';
 
 let replayChart = null;
 let loadedSession = null;
 let selectedSessionId = null;
+let isPlaying = false;
+let isPaused = false;
+let unsubscribe = null;
+
+// Data buffers for playback
+const WINDOW_SECONDS = 10;
+const SAMPLE_RATE = 30;
+const MAX_POINTS = WINDOW_SECONDS * SAMPLE_RATE;
+
+let dataBuffer = {
+    time: [],
+    g1_mag: [],
+    g2_mag: [],
+    delta: []
+};
 
 /**
  * Initialize Replay tab
@@ -24,8 +40,12 @@ export function initReplayTab() {
     // Load sessions list
     loadSessionsList();
 
+    // Subscribe to WebSocket messages
+    unsubscribe = onMessage(handleMessage);
+
     return {
         destroy() {
+            if (unsubscribe) unsubscribe();
             if (replayChart) {
                 replayChart.dispose();
                 replayChart = null;
@@ -289,69 +309,245 @@ function enableControls(enabled) {
 }
 
 /**
- * Start playback
+ * Handle incoming WebSocket messages
+ * @param {object} data - WebSocket message
  */
-function startPlayback() {
-    console.log('[Replay] Starting playback...');
+function handleMessage(data) {
+    switch (data.type) {
+        case 'playback_sample':
+            onPlaybackSample(data.data);
+            break;
+        case 'playback_status':
+            onPlaybackStatus(data.data);
+            break;
+        default:
+            // Ignore other message types
+            break;
+    }
+}
 
+/**
+ * Handle playback sample data
+ * @param {object} sample - Sample data
+ */
+function onPlaybackSample(sample) {
+    if (!sample) return;
+
+    const timestamp = sample.t_remote_ms / 1000.0;
+    const g1_mag = sample.g1_mag || 0;
+    const g2_mag = sample.g2_mag || 0;
+    const delta = Math.abs(g1_mag - g2_mag);
+
+    // Add to buffer
+    dataBuffer.time.push(timestamp);
+    dataBuffer.g1_mag.push(g1_mag);
+    dataBuffer.g2_mag.push(g2_mag);
+    dataBuffer.delta.push(delta);
+
+    // Trim to window size
+    if (dataBuffer.time.length > MAX_POINTS) {
+        dataBuffer.time = dataBuffer.time.slice(-MAX_POINTS);
+        dataBuffer.g1_mag = dataBuffer.g1_mag.slice(-MAX_POINTS);
+        dataBuffer.g2_mag = dataBuffer.g2_mag.slice(-MAX_POINTS);
+        dataBuffer.delta = dataBuffer.delta.slice(-MAX_POINTS);
+    }
+
+    // Update chart
+    updateChart();
+}
+
+/**
+ * Handle playback status update
+ * @param {object} status - Status data
+ */
+function onPlaybackStatus(status) {
+    isPlaying = status.is_playing;
+    isPaused = status.is_paused;
+
+    // Update progress bar
+    const progressBar = document.getElementById('playback-progress');
+    const timeDisplay = document.getElementById('playback-time');
+
+    if (progressBar && status.total_duration_ms > 0) {
+        progressBar.max = status.total_duration_ms;
+        progressBar.value = status.current_time_ms;
+    }
+
+    if (timeDisplay) {
+        const current = formatTime(status.current_time_ms);
+        const total = formatTime(status.total_duration_ms);
+        timeDisplay.textContent = `${current} / ${total}`;
+    }
+
+    // Update button states
+    updateButtonStates();
+
+    // If playback stopped, clear chart
+    if (!status.is_playing && !status.is_paused) {
+        // Playback ended
+        console.log('[Replay] Playback ended');
+    }
+}
+
+/**
+ * Update button states based on playback status
+ */
+function updateButtonStates() {
     const btnPlay = document.getElementById('btn-play');
     const btnPause = document.getElementById('btn-pause');
     const btnStop = document.getElementById('btn-stop');
 
-    if (btnPlay) btnPlay.disabled = true;
-    if (btnPause) btnPause.disabled = false;
-    if (btnStop) btnStop.disabled = false;
+    if (isPlaying) {
+        if (btnPlay) btnPlay.disabled = true;
+        if (btnPause) btnPause.disabled = false;
+        if (btnStop) btnStop.disabled = false;
+    } else if (isPaused) {
+        if (btnPlay) btnPlay.disabled = false;
+        if (btnPause) btnPause.disabled = true;
+        if (btnStop) btnStop.disabled = false;
+    } else {
+        if (btnPlay) btnPlay.disabled = !loadedSession;
+        if (btnPause) btnPause.disabled = true;
+        if (btnStop) btnStop.disabled = true;
+    }
+}
 
-    // TODO: Implement actual playback via WebSocket
-    // For now, just show a message
-    alert('回放功能需要後端 WebSocket 支援（開發中）');
+/**
+ * Update chart with current buffer data
+ */
+function updateChart() {
+    if (!replayChart) return;
+
+    // Convert to ECharts format: [[timestamp, value], ...]
+    const g1Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.g1_mag[i]]);
+    const g2Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.g2_mag[i]]);
+    const deltaData = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.delta[i]]);
+
+    replayChart.setOption({
+        series: [
+            { data: g1Data },
+            { data: g2Data },
+            { data: deltaData }
+        ]
+    });
+}
+
+/**
+ * Format milliseconds to mm:ss
+ * @param {number} ms - Milliseconds
+ * @returns {string} Formatted time
+ */
+function formatTime(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Start playback
+ */
+async function startPlayback() {
+    console.log('[Replay] Starting playback...');
+
+    if (!selectedSessionId) {
+        alert('請先選擇 Session');
+        return;
+    }
+
+    // Clear data buffer
+    dataBuffer = { time: [], g1_mag: [], g2_mag: [], delta: [] };
+
+    // Get speed
+    const speedSelect = document.getElementById('playback-speed');
+    const speed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
+
+    try {
+        const response = await fetch(`/api/playback/play/${selectedSessionId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ speed })
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        console.log('[Replay] Playback started');
+        isPlaying = true;
+        updateButtonStates();
+
+    } catch (error) {
+        console.error('[Replay] Failed to start playback:', error);
+        alert(`無法開始回放: ${error.message}`);
+    }
 }
 
 /**
  * Pause playback
  */
-function pausePlayback() {
+async function pausePlayback() {
     console.log('[Replay] Pausing playback...');
 
-    const btnPlay = document.getElementById('btn-play');
-    const btnPause = document.getElementById('btn-pause');
+    try {
+        const response = await fetch('/api/playback/pause', { method: 'POST' });
 
-    if (btnPlay) btnPlay.disabled = false;
-    if (btnPause) btnPause.disabled = true;
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
 
-    // TODO: Implement pause
+        isPaused = true;
+        isPlaying = false;
+        updateButtonStates();
+
+    } catch (error) {
+        console.error('[Replay] Failed to pause:', error);
+    }
 }
 
 /**
  * Stop playback
  */
-function stopPlayback() {
+async function stopPlayback() {
     console.log('[Replay] Stopping playback...');
 
-    const btnPlay = document.getElementById('btn-play');
-    const btnPause = document.getElementById('btn-pause');
-    const btnStop = document.getElementById('btn-stop');
-    const progressBar = document.getElementById('playback-progress');
-    const timeDisplay = document.getElementById('playback-time');
+    try {
+        const response = await fetch('/api/playback/stop', { method: 'POST' });
 
-    if (btnPlay) btnPlay.disabled = false;
-    if (btnPause) btnPause.disabled = true;
-    if (btnStop) btnStop.disabled = true;
-    if (progressBar) progressBar.value = 0;
-    if (timeDisplay) timeDisplay.textContent = '00:00 / 00:00';
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
 
-    // Clear chart
-    if (replayChart) {
-        replayChart.setOption({
-            series: [
-                { data: [] },
-                { data: [] },
-                { data: [] }
-            ]
-        });
+        isPlaying = false;
+        isPaused = false;
+
+        // Reset UI
+        const progressBar = document.getElementById('playback-progress');
+        const timeDisplay = document.getElementById('playback-time');
+
+        if (progressBar) progressBar.value = 0;
+        if (timeDisplay) timeDisplay.textContent = '00:00 / 00:00';
+
+        updateButtonStates();
+
+        // Clear chart and buffer
+        dataBuffer = { time: [], g1_mag: [], g2_mag: [], delta: [] };
+        if (replayChart) {
+            replayChart.setOption({
+                series: [
+                    { data: [] },
+                    { data: [] },
+                    { data: [] }
+                ]
+            });
+        }
+
+    } catch (error) {
+        console.error('[Replay] Failed to stop:', error);
     }
-
-    // TODO: Implement stop
 }
 
 /**

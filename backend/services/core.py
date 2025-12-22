@@ -60,6 +60,8 @@ class CoreService:
         self._event_loop = None  # 主事件循環（用於線程安全的異步調用）
         self._stats_task: Optional[asyncio.Task] = None  # 統計推送任務
         self._recording_status_task: Optional[asyncio.Task] = None  # 錄製狀態推送任務
+        self._playback_task: Optional[asyncio.Task] = None  # 回放任務
+        self._playback_speed: float = 1.0  # 回放速度
 
         # Stats & State
         self._stats = {
@@ -502,6 +504,140 @@ class CoreService:
         stats["is_running"] = self._running
 
         return stats
+
+    # --- 回放控制 ---
+
+    async def start_playback(self, session_id: str, speed: float = 1.0) -> bool:
+        """
+        開始回放指定 session
+
+        Args:
+            session_id: Session ID
+            speed: 回放速度（1.0=原速）
+
+        Returns:
+            bool: 是否成功開始回放
+
+        Raises:
+            RuntimeError: 已在回放中或 session 載入失敗
+        """
+        if self.player.is_playing:
+            raise RuntimeError("Already playing")
+
+        # 載入 session
+        success = self.player.load_session(session_id)
+        if not success:
+            raise RuntimeError(f"Failed to load session {session_id}")
+
+        self._playback_speed = speed
+
+        # 確保有 WebSocket manager
+        if not self._ws_manager:
+            try:
+                from api.websocket import manager as ws_manager
+                self._ws_manager = ws_manager
+            except ImportError:
+                logger.warning("WebSocket manager not available for playback")
+
+        # 取得事件循環
+        if not self._event_loop:
+            try:
+                self._event_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._event_loop = asyncio.get_event_loop()
+
+        # 啟動回放任務
+        self._playback_task = asyncio.create_task(self._playback_loop(speed))
+
+        logger.info(f"Playback started: {session_id} @ {speed}x")
+        return True
+
+    async def _playback_loop(self, speed: float):
+        """回放主循環"""
+        try:
+            from api.websocket import push_playback_sample, push_playback_status
+
+            session_info = self.player.loaded_session
+
+            # 發送開始狀態
+            await push_playback_status(
+                is_playing=True,
+                is_paused=False,
+                current_time_ms=0,
+                total_duration_ms=session_info.duration_ms,
+                session_id=session_info.id
+            )
+
+            # 使用 Player 的回放功能
+            async def on_sample(sample):
+                """每筆資料的回調"""
+                await push_playback_sample(sample)
+
+                # 每 30 筆發送一次狀態更新
+                if sample.get('seq', 0) % 30 == 0:
+                    await push_playback_status(
+                        is_playing=self.player.is_playing,
+                        is_paused=self.player.is_paused,
+                        current_time_ms=self.player.current_time_ms,
+                        total_duration_ms=self.player.total_duration_ms,
+                        session_id=session_info.id
+                    )
+
+            # 開始回放（同步包裝為異步）
+            await self.player.play(on_sample, speed=speed)
+
+            # 回放結束，發送最終狀態
+            await push_playback_status(
+                is_playing=False,
+                is_paused=False,
+                current_time_ms=self.player.total_duration_ms,
+                total_duration_ms=self.player.total_duration_ms,
+                session_id=session_info.id
+            )
+
+            logger.info("Playback completed")
+
+        except asyncio.CancelledError:
+            logger.info("Playback cancelled")
+        except Exception as e:
+            logger.error(f"Playback error: {e}", exc_info=True)
+        finally:
+            self._playback_task = None
+
+    def pause_playback(self):
+        """暫停回放"""
+        if not self.player.is_playing and not self.player.is_paused:
+            raise RuntimeError("Not playing")
+
+        self.player.pause()
+        logger.info("Playback paused")
+
+    def resume_playback(self):
+        """繼續回放"""
+        if not self.player.is_paused:
+            raise RuntimeError("Not paused")
+
+        self.player.resume()
+        logger.info("Playback resumed")
+
+    def stop_playback(self):
+        """停止回放"""
+        if self._playback_task:
+            self._playback_task.cancel()
+            self._playback_task = None
+
+        self.player.stop()
+        logger.info("Playback stopped")
+
+    def seek_playback(self, time_ms: int):
+        """
+        跳轉回放位置
+
+        Args:
+            time_ms: 目標時間（毫秒）
+        """
+        self.player.seek(time_ms)
+        logger.info(f"Playback seeked to {time_ms}ms")
 
     # --- 清理 ---
 

@@ -426,3 +426,47 @@ async def push_recording_status(is_recording: bool, session_name: Optional[str] 
         sample_count: 已錄製樣本數
     """
     await manager.send_recording_status(is_recording, session_name, sample_count)
+
+
+async def push_playback_sample(sample: Dict[str, Any]):
+    """
+    推送回放資料（不降頻，使用回放自身的速度控制）
+
+    Args:
+        sample: 樣本資料
+    """
+    message = {
+        "type": "playback_sample",
+        "data": sample
+    }
+    await manager.broadcast(message)
+
+
+async def push_playback_status(
+    is_playing: bool,
+    is_paused: bool = False,
+    current_time_ms: int = 0,
+    total_duration_ms: int = 0,
+    session_id: Optional[str] = None
+):
+    """
+    推送回放狀態
+
+    Args:
+        is_playing: 是否正在回放
+        is_paused: 是否暫停
+        current_time_ms: 當前回放時間
+        total_duration_ms: 總時長
+        session_id: Session ID
+    """
+    message = {
+        "type": "playback_status",
+        "data": {
+            "is_playing": is_playing,
+            "is_paused": is_paused,
+            "current_time_ms": current_time_ms,
+            "total_duration_ms": total_duration_ms,
+            "session_id": session_id
+        }
+    }
+    await manager.broadcast(message)
