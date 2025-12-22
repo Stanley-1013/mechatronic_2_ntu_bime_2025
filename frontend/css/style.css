@@ -102,7 +102,7 @@ header h1 {
 /* Main Content */
 main {
     padding: 2rem;
-    max-width: 1400px;
+    max-width: 1800px;
     margin: 0 auto;
 }
 
@@ -166,6 +166,17 @@ main {
     grid-row: 2;
 }
 
+/* Ensure charts fill their containers */
+.chart-card {
+    overflow: hidden;
+}
+
+.chart-card #live-chart,
+.chart-card #replay-chart {
+    width: 100% !important;
+    height: 350px !important;
+}
+
 /* Segments card spans full width */
 .live-grid .segments-card {
     grid-column: 1 / -1;
@@ -186,7 +197,7 @@ main {
 /* Analysis Grid Layout - Larger chart, better spacing */
 .analysis-grid {
     display: grid;
-    grid-template-columns: 280px 1fr 280px;
+    grid-template-columns: 250px 1fr 250px;
     grid-template-rows: auto 1fr;
     gap: 1rem;
     min-height: 600px;
@@ -213,7 +224,9 @@ main {
 }
 
 .analysis-grid .scatter-panel #scatter-chart {
+    width: 100% !important;
     height: 480px !important;
+    min-width: 0;
 }
 
 .analysis-grid .detail-panel {

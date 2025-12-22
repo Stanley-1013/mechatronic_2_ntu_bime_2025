@@ -10,9 +10,13 @@
  * @returns {object} uPlot instance
  */
 export function createTimeSeriesChart(container, options = {}) {
+    // Ensure minimum dimensions - fallback if container not yet rendered
+    const width = container.clientWidth || 800;
+    const height = Math.max(container.clientHeight - 20, 280);
+
     const defaultOptions = {
-        width: container.clientWidth,
-        height: container.clientHeight - 20,
+        width: width,
+        height: height,
         series: [
             {
                 label: 'Time'
@@ -54,9 +58,11 @@ export function createTimeSeriesChart(container, options = {}) {
 
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
+        const newWidth = container.clientWidth || 800;
+        const newHeight = Math.max(container.clientHeight - 20, 280);
         chart.setSize({
-            width: container.clientWidth,
-            height: container.clientHeight - 20
+            width: newWidth,
+            height: newHeight
         });
     });
     resizeObserver.observe(container);
