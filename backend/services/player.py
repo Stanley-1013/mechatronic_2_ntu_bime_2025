@@ -70,7 +70,11 @@ class Player:
             if not session_dir.is_dir():
                 continue
 
-            meta_path = session_dir / "metadata.json"
+            # FIXED: Support both meta.json (new format) and metadata.json (old format)
+            meta_path = session_dir / "meta.json"
+            if not meta_path.exists():
+                meta_path = session_dir / "metadata.json"
+
             data_path = session_dir / "data.csv"
 
             if not meta_path.exists() or not data_path.exists():
@@ -115,7 +119,12 @@ class Player:
         """
         # 找到對應的 session
         session_dir = self.base_dir / session_id
-        meta_path = session_dir / "metadata.json"
+
+        # FIXED: Support both meta.json (new format) and metadata.json (old format)
+        meta_path = session_dir / "meta.json"
+        if not meta_path.exists():
+            meta_path = session_dir / "metadata.json"
+
         data_path = session_dir / "data.csv"
 
         if not session_dir.exists() or not meta_path.exists() or not data_path.exists():
@@ -132,11 +141,15 @@ class Player:
             with open(data_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # 將所有數值欄位轉為 int
+                    # 將所有數值欄位轉為適當類型
                     sample = {}
                     for k, v in row.items():
                         try:
-                            sample[k] = int(v)
+                            # Try int first, then float
+                            if '.' in str(v):
+                                sample[k] = float(v)
+                            else:
+                                sample[k] = int(v)
                         except ValueError:
                             sample[k] = v  # 保留字串（如有）
                     samples.append(sample)

@@ -7,8 +7,12 @@
 
 from dataclasses import dataclass
 from typing import Optional, List, Callable
+import logging
+
 from services.segmenter import ShotSegment
 from services.processor import ProcessedSample
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,7 +39,7 @@ class Labeler:
         self,
         debounce_ms: int = 250,
         pressed_level: int = 1,
-        min_delay_ms: int = 200,
+        min_delay_ms: int = 50,      # FIXED: Reduced from 200ms to 50ms
         max_delay_ms: int = 3000
     ):
         """
@@ -44,7 +48,7 @@ class Labeler:
         Args:
             debounce_ms: 去抖冷卻時間（FR-L1: 250ms）
             pressed_level: 按下時的 level 值（1=按下為高，0=按下為低）
-            min_delay_ms: 最小對齊延遲（FR-L2: 200ms）
+            min_delay_ms: 最小對齊延遲（FIXED: 50ms，原本 200ms 太長）
             max_delay_ms: 最大對齊延遲（FR-L2: 3000ms）
         """
         self._debounce_ms = debounce_ms
@@ -62,6 +66,9 @@ class Labeler:
 
         # 回調
         self._on_label: Optional[Callable[[LabelEvent], None]] = None
+
+        logger.info(f"Labeler initialized: pressed_level={pressed_level}, "
+                   f"min_delay_ms={min_delay_ms}, max_delay_ms={max_delay_ms}")
 
     def process_sample(
         self,
@@ -98,11 +105,15 @@ class Labeler:
         if not is_press_edge:
             return None
 
+        # DEBUG: Log button press detection
+        logger.info(f"[Labeler] Button press detected! btn={current_level}, t={current_time_ms}ms")
+
         # 去抖檢查（FR-L1: 250ms 冷卻）
         if self._last_press_time_ms is not None:
             time_since_last_press = current_time_ms - self._last_press_time_ms
             if time_since_last_press < self._debounce_ms:
                 # 太接近上次按壓，忽略
+                logger.debug(f"[Labeler] Button press ignored (debounce): {time_since_last_press}ms < {self._debounce_ms}ms")
                 return None
 
         # 更新按壓時間
@@ -137,6 +148,12 @@ class Labeler:
         Returns:
             LabelEvent（可能有或沒有 matched_shot_id）
         """
+        # DEBUG: Log available segments
+        completed_segments = [s for s in segments if s.t_end_ms > 0]
+        logger.debug(f"[Labeler] Looking for matching segment. "
+                    f"Event time: {event_time_ms}ms, "
+                    f"Completed segments: {len(completed_segments)}")
+
         # 嘗試找到匹配的段落（FR-L2）
         matched_segment = self._find_matching_segment(event_time_ms, segments)
 
@@ -148,6 +165,8 @@ class Labeler:
             matched_segment.label = 'good'
             matched_segment.label_time_ms = event_time_ms
 
+            logger.info(f"[Labeler] Matched segment {matched_segment.shot_id}, delay={delay_ms}ms")
+
             event = LabelEvent(
                 kind='label_good',
                 t_host_ms=event_time_ms,
@@ -157,6 +176,15 @@ class Labeler:
             )
         else:
             # 對齊失敗（找不到符合的段落）
+            logger.warning(f"[Labeler] No matching segment found for button press at t={event_time_ms}ms. "
+                          f"Available segments: {len(completed_segments)}")
+
+            # Log details of recent segments for debugging
+            for seg in completed_segments[-3:]:  # Last 3 segments
+                delay = event_time_ms - seg.t_end_ms
+                logger.debug(f"  - Segment {seg.shot_id}: t_end={seg.t_end_ms}ms, delay={delay}ms, "
+                           f"in_range={self._min_delay_ms <= delay <= self._max_delay_ms}")
+
             event = LabelEvent(
                 kind='label_good',
                 t_host_ms=event_time_ms,
@@ -179,7 +207,7 @@ class Labeler:
         規則：
         - 選擇最近一個已結束段落
         - 條件：segment.t_end_ms <= event_time_ms
-        - 時間窗：event_time_ms - segment.t_end_ms ∈ [min_delay_ms, max_delay_ms]
+        - 時間窗：event_time_ms - segment.t_end_ms 在 [min_delay_ms, max_delay_ms]
 
         Args:
             event_time_ms: 事件時間
@@ -238,8 +266,10 @@ class Labeler:
                 if self._on_label:
                     self._on_label(event)
 
+                logger.info(f"[Labeler] Manual label: segment {shot_id} marked as good")
                 return True
 
+        logger.warning(f"[Labeler] Manual label failed: segment {shot_id} not found")
         return False
 
     def set_on_label(self, callback: Callable[[LabelEvent], None]):

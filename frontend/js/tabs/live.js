@@ -2,7 +2,7 @@
  * Live Tab - Real-time sensor data visualization
  */
 
-import { onMessage, sendMessage } from '../websocket.js';
+import { onMessage } from '../websocket.js';
 import { createMultiSeriesChart } from '../components/chart.js';
 
 let chart = null;
@@ -12,6 +12,7 @@ let isRecording = false;
 let recordingName = '';
 let recordingStartTime = null;
 let recordingTimerInterval = null;
+let recordingSampleCount = 0;
 
 // Data buffers
 const WINDOW_SECONDS = 10; // Display last 10 seconds
@@ -20,11 +21,11 @@ const MAX_POINTS = WINDOW_SECONDS * SAMPLE_RATE;
 
 let dataBuffer = {
     time: [],
-    // MPU1 三軸角速度 (°/s)
+    // MPU1 三軸角速度 (deg/s)
     gx1: [],
     gy1: [],
     gz1: [],
-    // MPU2 三軸角速度 (°/s)
+    // MPU2 三軸角速度 (deg/s)
     gx2: [],
     gy2: [],
     gz2: []
@@ -149,8 +150,12 @@ function handleMessage(data) {
             onStats(data);
             break;
         case 'label':
-            // Label event from backend
-            console.log('[Live] Label event:', data);
+            // Label event from backend - show feedback
+            onLabelEvent(data);
+            break;
+        case 'recording_status':
+            // Recording status update from backend
+            onRecordingStatus(data);
             break;
         case 'recording_started':
             onRecordingStarted(data);
@@ -294,6 +299,91 @@ function onSegmentEnd(data) {
 }
 
 /**
+ * Handle label event (button press marking a shot as "good")
+ * @param {object} data - Label data
+ */
+function onLabelEvent(data) {
+    // Backend format:
+    // {
+    //   type: 'label',
+    //   data: { shot_id, label, t_label_ms }
+    // }
+
+    console.log('[Live] Label event:', data);
+
+    const labelData = data.data || {};
+    const shotId = labelData.shot_id;
+    const label = labelData.label;
+
+    if (shotId) {
+        // Update segment in local list
+        const segment = segments.find(s => s.id === shotId);
+        if (segment) {
+            segment.label = label;
+            updateSegmentsList();
+        }
+
+        // Show feedback toast
+        showLabelFeedback(shotId, label);
+    } else {
+        // Button was pressed but no matching segment found
+        showLabelFeedback(null, 'no_match');
+    }
+}
+
+/**
+ * Show visual feedback for label event
+ * @param {string|null} shotId - Shot ID that was labeled
+ * @param {string} label - Label type ('good', 'no_match')
+ */
+function showLabelFeedback(shotId, label) {
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = 'label-feedback';
+
+    if (shotId && label === 'good') {
+        toast.classList.add('success');
+        toast.textContent = `Good shot marked! (${shotId.substring(0, 8)}...)`;
+    } else if (label === 'no_match') {
+        toast.classList.add('warning');
+        toast.textContent = 'Button pressed - no recent shot to mark';
+    } else {
+        toast.classList.add('success');
+        toast.textContent = `Shot marked as ${label}`;
+    }
+
+    document.body.appendChild(toast);
+
+    // Remove after animation
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+
+/**
+ * Handle recording status update from WebSocket
+ * @param {object} data - Recording status data
+ */
+function onRecordingStatus(data) {
+    // Backend format:
+    // {
+    //   type: 'recording_status',
+    //   data: { is_recording, session_name, sample_count }
+    // }
+
+    const statusData = data.data || {};
+
+    if (statusData.is_recording) {
+        recordingSampleCount = statusData.sample_count || 0;
+
+        // Update UI if we're currently recording
+        if (isRecording) {
+            updateRecordingUI();
+        }
+    }
+}
+
+/**
  * Handle statistics update
  * @param {object} data - Stats data
  */
@@ -324,6 +414,7 @@ function onRecordingStarted(data) {
     isRecording = true;
     recordingName = data.session_name;
     recordingStartTime = Date.now();
+    recordingSampleCount = 0;
 
     updateRecordingUI();
     startRecordingTimer();
@@ -337,6 +428,7 @@ function onRecordingStopped(data) {
     console.log('[Live] Recording stopped:', data);
     isRecording = false;
     recordingStartTime = null;
+    recordingSampleCount = 0;
 
     updateRecordingUI();
 }
@@ -367,11 +459,12 @@ async function startRecording(name) {
         isRecording = true;
         recordingName = result.session_id || name;
         recordingStartTime = Date.now();
+        recordingSampleCount = 0;
         updateRecordingUI();
         startRecordingTimer();
     } catch (error) {
         console.error('[Live] Failed to start recording:', error);
-        alert(`錄製啟動失敗: ${error.message}`);
+        alert(`Recording failed to start: ${error.message}`);
     }
 }
 
@@ -398,10 +491,11 @@ async function stopRecording() {
         // Update UI directly from API response (don't wait for WebSocket)
         isRecording = false;
         recordingStartTime = null;
+        recordingSampleCount = 0;
         updateRecordingUI();
     } catch (error) {
         console.error('[Live] Failed to stop recording:', error);
-        alert(`錄製停止失敗: ${error.message}`);
+        alert(`Recording failed to stop: ${error.message}`);
     }
 }
 
@@ -426,7 +520,7 @@ function updateSegmentsList() {
     if (!listEl) return;
 
     if (segments.length === 0) {
-        listEl.innerHTML = '<p class="empty-message">尚未偵測到投籃</p>';
+        listEl.innerHTML = '<p class="empty-message">No shots detected yet</p>';
         return;
     }
 
@@ -434,21 +528,21 @@ function updateSegmentsList() {
     const html = segments.slice().reverse().map(seg => {
         const duration = seg.endTime
             ? ((seg.endTime - seg.startTime) * 1000).toFixed(0)
-            : '進行中';
+            : 'In progress';
 
         const labelClass = seg.label === 'good' ? 'label-good' :
                           seg.label === 'bad' ? 'label-bad' : '';
 
-        const labelText = seg.label === 'good' ? '好球' :
-                         seg.label === 'bad' ? '壞球' : '未標記';
+        const labelText = seg.label === 'good' ? 'GOOD' :
+                         seg.label === 'bad' ? 'BAD' : 'Unmarked';
 
         return `
-            <div class="segment-item">
+            <div class="segment-item ${labelClass}">
                 <div class="segment-time">
                     ${new Date(seg.startTime * 1000).toLocaleTimeString()}
                 </div>
                 <div class="segment-duration">
-                    時長: ${duration}ms
+                    Duration: ${duration}ms
                 </div>
                 <div class="segment-label ${labelClass}">
                     ${labelText}
@@ -475,10 +569,15 @@ function updateRecordingUI() {
         btnStart.disabled = true;
         btnStop.disabled = false;
         inputName.disabled = true;
+
+        // Format sample count with thousands separator
+        const formattedCount = recordingSampleCount.toLocaleString();
+
         statusEl.innerHTML = `
             <div class="recording-active">
                 <span class="recording-dot"></span>
-                錄製中: ${recordingName}
+                Recording: ${recordingName}
+                <span class="recording-samples">${formattedCount} samples</span>
                 <span id="recording-timer">00:00</span>
             </div>
         `;
@@ -497,6 +596,8 @@ function startRecordingTimer() {
     // Clear any existing timer to prevent duplicates
     stopRecordingTimer();
 
+    const statusEl = document.getElementById('record-status');
+
     recordingTimerInterval = setInterval(() => {
         if (!isRecording) {
             stopRecordingTimer();
@@ -510,6 +611,12 @@ function startRecordingTimer() {
         const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
         const seconds = (elapsed % 60).toString().padStart(2, '0');
         timerEl.textContent = `${minutes}:${seconds}`;
+
+        // Also update sample count display
+        const samplesEl = statusEl?.querySelector('.recording-samples');
+        if (samplesEl) {
+            samplesEl.textContent = `${recordingSampleCount.toLocaleString()} samples`;
+        }
     }, 1000);
 }
 

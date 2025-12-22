@@ -233,6 +233,40 @@ class ConnectionManager:
         }
         await self.broadcast(message)
 
+    async def send_recording_status(
+        self,
+        is_recording: bool,
+        session_name: Optional[str] = None,
+        sample_count: int = 0
+    ):
+        """
+        發送錄製狀態
+
+        訊息格式:
+        {
+            "type": "recording_status",
+            "data": {
+                "is_recording": true,
+                "session_name": "session_20241222",
+                "sample_count": 1234
+            }
+        }
+
+        Args:
+            is_recording: 是否正在錄製
+            session_name: Session 名稱
+            sample_count: 已錄製樣本數
+        """
+        message = {
+            "type": "recording_status",
+            "data": {
+                "is_recording": is_recording,
+                "session_name": session_name,
+                "sample_count": sample_count
+            }
+        }
+        await self.broadcast(message)
+
     @property
     def connection_count(self) -> int:
         """
@@ -380,3 +414,15 @@ async def push_label(shot_id: str, label: str, t_label_ms: int):
         t_label_ms: 標籤時間戳（毫秒）
     """
     await manager.send_label_event(shot_id, label, t_label_ms)
+
+
+async def push_recording_status(is_recording: bool, session_name: Optional[str] = None, sample_count: int = 0):
+    """
+    推送錄製狀態
+
+    Args:
+        is_recording: 是否正在錄製
+        session_name: Session 名稱
+        sample_count: 已錄製樣本數
+    """
+    await manager.send_recording_status(is_recording, session_name, sample_count)

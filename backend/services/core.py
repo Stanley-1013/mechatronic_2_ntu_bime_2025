@@ -3,9 +3,9 @@ CoreService - Central Service Manager (Singleton)
 統一管理所有後端服務的核心類別，整合完整的資料處理流程
 
 資料流：
-Serial Ingest → Processor → Ring Buffer → Segmenter → Labeler → Recorder
-                                       ↓
-                                  WebSocket Broadcast
+Serial Ingest -> Processor -> Ring Buffer -> Segmenter -> Labeler -> Recorder
+                                          |
+                                     WebSocket Broadcast
 """
 from typing import Optional
 import threading
@@ -59,6 +59,7 @@ class CoreService:
         self._ws_manager = None  # WebSocket manager (延遲導入)
         self._event_loop = None  # 主事件循環（用於線程安全的異步調用）
         self._stats_task: Optional[asyncio.Task] = None  # 統計推送任務
+        self._recording_status_task: Optional[asyncio.Task] = None  # 錄製狀態推送任務
 
         # Stats & State
         self._stats = {
@@ -156,6 +157,11 @@ class CoreService:
             self._stats_task.cancel()
             self._stats_task = None
 
+        # 取消錄製狀態推送任務
+        if self._recording_status_task:
+            self._recording_status_task.cancel()
+            self._recording_status_task = None
+
         if self.serial_ingest:
             self.serial_ingest.stop()
 
@@ -172,6 +178,20 @@ class CoreService:
             except Exception as e:
                 logger.warning(f"Failed to push stats: {e}")
             await asyncio.sleep(1.0)  # 每秒推送一次
+
+    async def _recording_status_push_loop(self):
+        """定期推送錄製狀態到 WebSocket"""
+        while self.recorder.is_recording:
+            try:
+                if self._ws_manager:
+                    await self._ws_manager.send_recording_status(
+                        is_recording=True,
+                        session_name=self.recorder.current_session,
+                        sample_count=self.recorder.sample_count
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to push recording status: {e}")
+            await asyncio.sleep(0.5)  # 每 0.5 秒推送一次
 
     def _schedule_async(self, coro):
         """
@@ -229,17 +249,23 @@ class CoreService:
 
             # 4. 標註處理
             label_event = self.labeler.process_sample(processed, self.segmenter.segments)
-            if label_event and label_event.matched_shot_id:
-                # 標籤對齊成功，廣播 label_event
-                logger.info(f"Label event: matched_shot_id={label_event.matched_shot_id}")
-                if self._ws_manager:
-                    self._schedule_async(
-                        self._ws_manager.send_label_event(
-                            label_event.matched_shot_id,
-                            'good',
-                            label_event.t_host_ms
+            if label_event:
+                # Log button press detection for debugging
+                logger.debug(f"Button press detected: btn={processed.btn}, t={processed.t_remote_ms}")
+                if label_event.matched_shot_id:
+                    # 標籤對齊成功，廣播 label_event
+                    logger.info(f"Label event: matched_shot_id={label_event.matched_shot_id}, delay={label_event.delay_ms}ms")
+                    if self._ws_manager:
+                        self._schedule_async(
+                            self._ws_manager.send_label_event(
+                                label_event.matched_shot_id,
+                                'good',
+                                label_event.t_host_ms
+                            )
                         )
-                    )
+                else:
+                    # 按鈕被按下但無法對齊到段落
+                    logger.warning(f"Button pressed but no matching segment found at t={label_event.t_host_ms}")
 
             # 5. 錄製
             if self.recorder.is_recording:
@@ -303,6 +329,14 @@ class CoreService:
 
         session_id = self.recorder.start(name, imu_positions)
         logger.info(f"Recording started: {session_id}")
+
+        # 啟動錄製狀態推送任務
+        if self._event_loop and self._ws_manager:
+            self._recording_status_task = asyncio.run_coroutine_threadsafe(
+                self._recording_status_push_loop(),
+                self._event_loop
+            )
+
         return session_id
 
     def stop_recording(self) -> dict:
@@ -316,6 +350,24 @@ class CoreService:
             RuntimeError: 未在錄製中
         """
         meta = self.recorder.stop()
+
+        # 取消錄製狀態推送任務
+        if self._recording_status_task:
+            try:
+                self._recording_status_task.cancel()
+            except Exception:
+                pass
+            self._recording_status_task = None
+
+        # 發送最終錄製狀態
+        if self._ws_manager and self._event_loop:
+            self._schedule_async(
+                self._ws_manager.send_recording_status(
+                    is_recording=False,
+                    session_name=None,
+                    sample_count=meta.get("sample_count", 0)
+                )
+            )
 
         # 更新統計
         self._stats["total_sessions"] += 1
@@ -350,7 +402,7 @@ class CoreService:
         取得校正偏移量
 
         Returns:
-            dict with keys: gx1, gy1, gz1, gx2, gy2, gz2 (單位: °/s)
+            dict with keys: gx1, gy1, gz1, gx2, gy2, gz2 (單位: dps)
         """
         return self.processor.calibration_offset
 
@@ -435,6 +487,7 @@ class CoreService:
 
         # Recording 狀態
         stats["is_recording"] = self.recorder.is_recording
+        stats["recording_sample_count"] = self.recorder.sample_count if self.recorder.is_recording else 0
         stats["is_calibrating"] = self.processor.is_calibrating()
         stats["is_running"] = self._running
 
