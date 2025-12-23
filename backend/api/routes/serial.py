@@ -34,11 +34,17 @@ async def connect_serial(
     """
     連接 Serial port
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
+        logger.info(f"[API] Connect request: port={port}, baudrate={baudrate}")
         core = CoreService.get_instance()
         await core.start_serial(port, baudrate)
+        logger.info(f"[API] Connect successful: port={port}")
         return {"status": "connected", "port": port, "baudrate": baudrate}
     except Exception as e:
+        logger.error(f"[API] Connect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

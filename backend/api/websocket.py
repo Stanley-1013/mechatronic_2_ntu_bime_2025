@@ -131,6 +131,10 @@ class ConnectionManager:
         Args:
             sample: 樣本資料字典
         """
+        # 檢查是否有連線
+        if not self.active_connections:
+            return
+
         # 降頻檢查
         t_ms = sample.get('t_remote_ms', 0)
         if not self.broadcaster.should_send(t_ms):

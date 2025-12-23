@@ -157,21 +157,31 @@ class SerialIngest:
         Args:
             on_sample: 回調函數
         """
-        logger.info("Read loop started")
+        logger.info("=" * 50)
+        logger.info("[ReadLoop] STARTED - waiting for data...")
+        logger.info("=" * 50)
         consecutive_errors = 0
         max_consecutive_errors = 10
+        timeout_count = 0
 
         try:
             while self._running and not self._stop_event.is_set():
                 try:
                     # 讀取一行
                     if not self.serial or not self.serial.is_open:
-                        logger.error("Serial not open")
+                        logger.error("[ReadLoop] Serial not open!")
                         break
 
                     line_bytes = self.serial.readline()
+
+                    # 記錄 timeout 情況
                     if not line_bytes:
-                        continue  # timeout
+                        timeout_count += 1
+                        if timeout_count % 10 == 1:  # 每 10 次 timeout 記錄一次
+                            logger.info(f"[ReadLoop] Waiting for data... (timeout #{timeout_count})")
+                        continue
+
+                    timeout_count = 0  # 收到資料，重置 timeout 計數
 
                     # 解碼
                     try:
@@ -180,9 +190,11 @@ class SerialIngest:
                         logger.debug(f"Decode error: {e}")
                         continue
 
-                    # Debug: 每 100 行記錄一次
-                    if self._stats['total_rx'] % 100 == 0 or self._stats['total_rx'] < 5:
-                        logger.debug(f"[Serial RX] line={line[:80] if len(line) > 80 else line}")
+                    # Debug: 記錄收到的資料
+                    if self._stats['total_rx'] == 0:
+                        logger.info(f"[ReadLoop] First data received: {line[:80]}")
+                    elif self._stats['total_rx'] % 100 == 0:
+                        logger.info(f"[ReadLoop] Received {self._stats['total_rx']} lines")
 
                     # 解析
                     sample = self.parse_line(line)

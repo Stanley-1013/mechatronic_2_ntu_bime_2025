@@ -222,6 +222,8 @@ class CoreService:
             except Exception as e:
                 logger.warning(f"Failed to schedule async task: {e}")
 
+    _sample_count = 0  # 類別變數追蹤處理的樣本數
+
     def _on_raw_sample(self, raw_sample: SerialSample):
         """
         處理原始資料的回調（從 Serial 線程調用）
@@ -238,6 +240,14 @@ class CoreService:
             raw_sample: SerialSample（原始資料）
         """
         try:
+            # 追蹤樣本數
+            CoreService._sample_count += 1
+            if CoreService._sample_count == 1:
+                logger.info(f"[Core] First sample received! seq={raw_sample.seq}")
+            elif CoreService._sample_count % 100 == 0:
+                ws_count = len(self._ws_manager.active_connections) if self._ws_manager else 0
+                logger.info(f"[Core] Processed {CoreService._sample_count} samples, WS connections: {ws_count}")
+
             # 1. 資料處理
             processed = self.processor.process(raw_sample)
 
