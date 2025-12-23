@@ -180,6 +180,10 @@ class SerialIngest:
                         logger.debug(f"Decode error: {e}")
                         continue
 
+                    # Debug: 每 100 行記錄一次
+                    if self._stats['total_rx'] % 100 == 0 or self._stats['total_rx'] < 5:
+                        logger.debug(f"[Serial RX] line={line[:80] if len(line) > 80 else line}")
+
                     # 解析
                     sample = self.parse_line(line)
                     if sample:

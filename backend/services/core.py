@@ -112,14 +112,18 @@ class CoreService:
             serial.SerialException: Serial 連接失敗
         """
         if self._running:
-            logger.warning("Serial already running")
-            return
+            logger.warning("Serial already running, stopping first...")
+            self.stop_serial()
 
         logger.info(f"Starting serial: {port} @ {baudrate} baud")
 
-        # 初始化 Serial Ingest
-        if self.serial_ingest is None:
-            self.serial_ingest = SerialIngest(port, baudrate)
+        # 每次都重新建立 Serial Ingest（支援切換 port）
+        if self.serial_ingest is not None:
+            try:
+                self.serial_ingest.stop()
+            except Exception:
+                pass
+        self.serial_ingest = SerialIngest(port, baudrate)
 
         # 延遲導入 WebSocket manager
         try:
