@@ -19,9 +19,12 @@ const MAX_POINTS = WINDOW_SECONDS * SAMPLE_RATE;
 
 let dataBuffer = {
     time: [],
-    g1_mag: [],
-    g2_mag: [],
-    delta: []
+    gx1: [],
+    gy1: [],
+    gz1: [],
+    gx2: [],
+    gy2: [],
+    gz2: []
 };
 
 /**
@@ -75,7 +78,7 @@ function initChart() {
             }
         },
         legend: {
-            data: ['Gyro1', 'Gyro2', 'Delta'],
+            data: ['gx1', 'gy1', 'gz1', 'gx2', 'gy2', 'gz2'],
             textStyle: {
                 color: '#f3f4f6'
             }
@@ -104,26 +107,49 @@ function initChart() {
             }
         },
         series: [
+            // MPU1: red, green, blue
             {
-                name: 'Gyro1',
+                name: 'gx1',
                 type: 'line',
                 data: [],
                 symbol: 'none',
-                lineStyle: { width: 2, color: '#2563eb' }
+                lineStyle: { width: 2, color: '#ef4444' }
             },
             {
-                name: 'Gyro2',
+                name: 'gy1',
                 type: 'line',
                 data: [],
                 symbol: 'none',
-                lineStyle: { width: 2, color: '#10b981' }
+                lineStyle: { width: 2, color: '#22c55e' }
             },
             {
-                name: 'Delta',
+                name: 'gz1',
                 type: 'line',
                 data: [],
                 symbol: 'none',
-                lineStyle: { width: 1, color: '#f59e0b' }
+                lineStyle: { width: 2, color: '#3b82f6' }
+            },
+            // MPU2: orange, purple, cyan
+            {
+                name: 'gx2',
+                type: 'line',
+                data: [],
+                symbol: 'none',
+                lineStyle: { width: 2, color: '#f97316' }
+            },
+            {
+                name: 'gy2',
+                type: 'line',
+                data: [],
+                symbol: 'none',
+                lineStyle: { width: 2, color: '#a855f7' }
+            },
+            {
+                name: 'gz2',
+                type: 'line',
+                data: [],
+                symbol: 'none',
+                lineStyle: { width: 2, color: '#06b6d4' }
             }
         ]
     };
@@ -334,22 +360,25 @@ function onPlaybackSample(sample) {
     if (!sample) return;
 
     const timestamp = sample.t_remote_ms / 1000.0;
-    const g1_mag = sample.g1_mag || 0;
-    const g2_mag = sample.g2_mag || 0;
-    const delta = Math.abs(g1_mag - g2_mag);
 
-    // Add to buffer
+    // Add to buffer - 6 axis data
     dataBuffer.time.push(timestamp);
-    dataBuffer.g1_mag.push(g1_mag);
-    dataBuffer.g2_mag.push(g2_mag);
-    dataBuffer.delta.push(delta);
+    dataBuffer.gx1.push(sample.gx1_dps || 0);
+    dataBuffer.gy1.push(sample.gy1_dps || 0);
+    dataBuffer.gz1.push(sample.gz1_dps || 0);
+    dataBuffer.gx2.push(sample.gx2_dps || 0);
+    dataBuffer.gy2.push(sample.gy2_dps || 0);
+    dataBuffer.gz2.push(sample.gz2_dps || 0);
 
     // Trim to window size
     if (dataBuffer.time.length > MAX_POINTS) {
         dataBuffer.time = dataBuffer.time.slice(-MAX_POINTS);
-        dataBuffer.g1_mag = dataBuffer.g1_mag.slice(-MAX_POINTS);
-        dataBuffer.g2_mag = dataBuffer.g2_mag.slice(-MAX_POINTS);
-        dataBuffer.delta = dataBuffer.delta.slice(-MAX_POINTS);
+        dataBuffer.gx1 = dataBuffer.gx1.slice(-MAX_POINTS);
+        dataBuffer.gy1 = dataBuffer.gy1.slice(-MAX_POINTS);
+        dataBuffer.gz1 = dataBuffer.gz1.slice(-MAX_POINTS);
+        dataBuffer.gx2 = dataBuffer.gx2.slice(-MAX_POINTS);
+        dataBuffer.gy2 = dataBuffer.gy2.slice(-MAX_POINTS);
+        dataBuffer.gz2 = dataBuffer.gz2.slice(-MAX_POINTS);
     }
 
     // Update chart
@@ -419,15 +448,21 @@ function updateChart() {
     if (!replayChart) return;
 
     // Convert to ECharts format: [[timestamp, value], ...]
-    const g1Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.g1_mag[i]]);
-    const g2Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.g2_mag[i]]);
-    const deltaData = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.delta[i]]);
+    const gx1Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gx1[i]]);
+    const gy1Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gy1[i]]);
+    const gz1Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gz1[i]]);
+    const gx2Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gx2[i]]);
+    const gy2Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gy2[i]]);
+    const gz2Data = dataBuffer.time.map((t, i) => [t * 1000, dataBuffer.gz2[i]]);
 
     replayChart.setOption({
         series: [
-            { data: g1Data },
-            { data: g2Data },
-            { data: deltaData }
+            { data: gx1Data },
+            { data: gy1Data },
+            { data: gz1Data },
+            { data: gx2Data },
+            { data: gy2Data },
+            { data: gz2Data }
         ]
     });
 }
@@ -456,7 +491,7 @@ async function startPlayback() {
     }
 
     // Clear data buffer
-    dataBuffer = { time: [], g1_mag: [], g2_mag: [], delta: [] };
+    dataBuffer = { time: [], gx1: [], gy1: [], gz1: [], gx2: [], gy2: [], gz2: [] };
 
     // Get speed
     const speedSelect = document.getElementById('playback-speed');
@@ -534,10 +569,13 @@ async function stopPlayback() {
         updateButtonStates();
 
         // Clear chart and buffer
-        dataBuffer = { time: [], g1_mag: [], g2_mag: [], delta: [] };
+        dataBuffer = { time: [], gx1: [], gy1: [], gz1: [], gx2: [], gy2: [], gz2: [] };
         if (replayChart) {
             replayChart.setOption({
                 series: [
+                    { data: [] },
+                    { data: [] },
+                    { data: [] },
                     { data: [] },
                     { data: [] },
                     { data: [] }
