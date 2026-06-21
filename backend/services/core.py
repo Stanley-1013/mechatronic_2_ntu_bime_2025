@@ -129,6 +129,9 @@ class CoreService:
         try:
             from api.websocket import manager as ws_manager
             self._ws_manager = ws_manager
+            # 重置 broadcaster（避免時間戳回溯問題）
+            ws_manager.broadcaster.reset()
+            logger.info("WebSocket broadcaster reset")
         except ImportError:
             logger.warning("WebSocket manager not available")
             self._ws_manager = None

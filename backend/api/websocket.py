@@ -12,6 +12,11 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+# At 100Hz, normal jitter is <50ms; 1000ms conservatively identifies an Arduino timer reset
+# vs. out-of-order packets.
+_TIME_RESET_THRESHOLD_MS = 1000
+
+
 class SampleBroadcaster:
     """
     降頻廣播器
@@ -39,6 +44,12 @@ class SampleBroadcaster:
         Returns:
             是否應該發送
         """
+        # 處理時間戳回溯（Serial 重連時 Arduino 重新計時）
+        # 如果 t_ms 比 last_send_ms 小很多，表示時間戳重置了
+        if self.last_send_ms > 0 and t_ms < self.last_send_ms - _TIME_RESET_THRESHOLD_MS:
+            logger.info(f"[Broadcaster] Time reset detected: {self.last_send_ms} -> {t_ms}, resetting")
+            self.last_send_ms = 0
+
         if t_ms - self.last_send_ms >= self.interval_ms:
             self.last_send_ms = t_ms
             return True
